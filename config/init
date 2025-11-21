@@ -1,0 +1,55 @@
+#!/bin/sh
+
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+# Mount essential filesystems
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mount -t tmpfs tmpfs /tmp
+
+mkdir -p /dev/shm /dev/pts
+mount -t tmpfs tmpfs /dev/shm
+mount -t devpts devpts /dev/pts
+
+# Setup XDG runtime directory
+export XDG_RUNTIME_DIR=/run/user/0
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR"
+
+# Start seatd for seat management
+/usr/bin/seatd -g video &
+sleep 1
+
+# Show welcome message
+clear
+echo "========================================"
+echo "       Welcome to ALinux v1.0"
+echo "    Powered by Azul Graphics System"
+echo "========================================"
+echo ""
+
+# Check for first boot
+if [ ! -f /etc/.installed ]; then
+    echo "First boot detected - launching installer..."
+    sleep 2
+    /usr/bin/introibo
+    touch /etc/.installed
+    echo ""
+    echo "Installation complete. Press Enter to continue..."
+    read
+fi
+
+# Start Azul compositor
+echo "Starting Azul Compositor..."
+/usr/bin/acomp &
+COMPOSITOR_PID=$!
+sleep 1
+
+# Start login manager
+/usr/bin/alogin
+
+# Drop to shell
+echo ""
+echo "Dropping to shell. Type 'exit' to shutdown."
+exec /bin/sh
