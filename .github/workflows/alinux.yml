@@ -1,4 +1,4 @@
-name: Build Introibo Linux ISO
+name: Build ALinux ISO
 
 on:
   push:
@@ -14,153 +14,94 @@ env:
   WAYLAND_PROTOCOLS_VERSION: "1.36"
 
 jobs:
-  build:
+  build-kernel:
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.kernel-cache.outputs.cache-hit }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Cache kernel build
+      id: kernel-cache
+      uses: actions/cache@v3
+      with:
+        path: |
+          kernel-build/bzImage
+          kernel-build/version.txt
+        key: kernel-${{ env.KERNEL_VERSION }}-${{ hashFiles('config/kernel.config') }}
+        
+    - name: Install kernel build dependencies
+      if: steps.kernel-cache.outputs.cache-hit != 'true'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential bc bison flex libelf-dev \
+          libssl-dev libncurses-dev wget
+          
+    - name: Build Linux kernel
+      if: steps.kernel-cache.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p kernel-build
+        cd kernel-build
+        
+        wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz
+        tar xf linux-${KERNEL_VERSION}.tar.xz
+        cd linux-${KERNEL_VERSION}
+        
+        # Copy config from repo
+        cp ../../config/kernel.config .config
+        make olddefconfig
+        
+        echo "Starting kernel build..."
+        make -j$(nproc) CFLAGS="-O3 -march=x86-64 -mtune=generic -pipe"
+        
+        # Debug: show directory structure
+        echo "=== Directory structure ==="
+        tree -L 3 arch/x86/boot || find arch/x86/boot -type f
+        
+        # Copy to cache directory
+        cp arch/x86/boot/bzImage ../bzImage
+        echo "${KERNEL_VERSION}" > ../version.txt
+        
+    - name: Upload kernel artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-bzImage
+        path: kernel-build/bzImage
+        retention-days: 1
+
+  build-userspace:
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Install build dependencies
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          build-essential bc bison flex libelf-dev \
-          libssl-dev libncurses-dev cpio genisoimage \
-          syslinux isolinux wget ninja-build meson \
-          pkg-config libwayland-dev wayland-protocols \
-          libxkbcommon-dev libinput-dev libdrm-dev \
-          libgbm-dev libpixman-1-dev libseat-dev \
-          hwdata libudev-dev libsystemd-dev git
+          build-essential pkg-config wget cpio \
+          ninja-build meson libwayland-dev \
+          wayland-protocols libxkbcommon-dev \
+          libinput-dev libdrm-dev libgbm-dev \
+          libpixman-1-dev libseat-dev libudev-dev
           
-    - name: Create build directories
-      run: |
-        mkdir -p build/{kernel,rootfs,programs,iso}
-        mkdir -p distro/{bin,sbin,lib,lib64,usr,etc,dev,proc,sys,run,tmp}
-        mkdir -p distro/usr/{bin,lib,share}
-        mkdir -p distro/etc/init.d
-        mkdir -p distro/run/user/0
-        
-    - name: Generate optimized kernel config
-      run: |
-        cat > build/kernel.config << 'EOF'
-        CONFIG_64BIT=y
-        CONFIG_X86_64=y
-        CONFIG_SMP=y
-        CONFIG_LOCALVERSION="-introibo"
-        
-        # CachyOS-style optimizations
-        CONFIG_GENERIC_CPU=n
-        CONFIG_MZEN4=y
-        CONFIG_X86_X2APIC=y
-        CONFIG_MICROCODE=y
-        CONFIG_MICROCODE_AMD=y
-        CONFIG_MICROCODE_INTEL=y
-        
-        # Aggressive performance
-        CONFIG_HZ_1000=y
-        CONFIG_HZ=1000
-        CONFIG_PREEMPT_VOLUNTARY=y
-        CONFIG_NO_HZ_FULL=y
-        
-        # Essential kernel features
-        CONFIG_DEVTMPFS=y
-        CONFIG_DEVTMPFS_MOUNT=y
-        CONFIG_TMPFS=y
-        CONFIG_PROC_FS=y
-        CONFIG_SYSFS=y
-        CONFIG_TTY=y
-        CONFIG_VT=y
-        CONFIG_VT_CONSOLE=y
-        CONFIG_UNIX=y
-        CONFIG_BINFMT_ELF=y
-        CONFIG_BLK_DEV_LOOP=y
-        
-        # DRM/Graphics
-        CONFIG_DRM=y
-        CONFIG_DRM_FBDEV_EMULATION=y
-        CONFIG_FB=y
-        CONFIG_FRAMEBUFFER_CONSOLE=y
-        CONFIG_LOGO=y
-        CONFIG_LOGO_LINUX_CLUT224=y
-        CONFIG_DRM_BOCHS=y
-        CONFIG_DRM_I915=y
-        CONFIG_DRM_AMDGPU=y
-        CONFIG_DRM_RADEON=y
-        CONFIG_DRM_NOUVEAU=y
-        
-        # Input devices
-        CONFIG_INPUT=y
-        CONFIG_INPUT_KEYBOARD=y
-        CONFIG_INPUT_MOUSE=y
-        CONFIG_INPUT_EVDEV=y
-        
-        # USB support
-        CONFIG_USB_SUPPORT=y
-        CONFIG_USB=y
-        CONFIG_USB_XHCI_HCD=y
-        CONFIG_USB_EHCI_HCD=y
-        CONFIG_USB_OHCI_HCD=y
-        CONFIG_USB_STORAGE=y
-        CONFIG_USB_HID=y
-        
-        # Networking (for AUR)
-        CONFIG_NET=y
-        CONFIG_INET=y
-        CONFIG_PACKET=y
-        CONFIG_UNIX=y
-        CONFIG_NETDEVICES=y
-        CONFIG_ETHERNET=y
-        CONFIG_NET_VENDOR_INTEL=y
-        CONFIG_E1000=y
-        CONFIG_E1000E=y
-        CONFIG_NET_VENDOR_REALTEK=y
-        CONFIG_8139TOO=y
-        CONFIG_R8169=y
-        
-        # Filesystem support
-        CONFIG_EXT4_FS=y
-        CONFIG_EXT4_FS_POSIX_ACL=y
-        CONFIG_EXT4_FS_SECURITY=y
-        CONFIG_VFAT_FS=y
-        CONFIG_FAT_FS=y
-        CONFIG_ISO9660_FS=y
-        CONFIG_SQUASHFS=y
-        
-        # Compression
-        CONFIG_SQUASHFS_ZLIB=y
-        CONFIG_RD_GZIP=y
-        CONFIG_DECOMPRESS_GZIP=y
-        
-        # EFI support
-        CONFIG_EFI=y
-        CONFIG_EFI_STUB=y
-        CONFIG_EFI_VARS=y
-        
-        # Security
-        CONFIG_SECURITY=y
-        CONFIG_SECURITYFS=y
-        EOF
-        
-    - name: Download and build Linux kernel
-      run: |
-        cd build/kernel
-        wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz
-        tar xf linux-${KERNEL_VERSION}.tar.xz
-        cd linux-${KERNEL_VERSION}
-        
-        # Use optimized config
-        cp ../../../build/kernel.config .config
-        make olddefconfig
-        
-        # Build with optimizations
-        make -j$(nproc) CFLAGS="-O3 -march=native -mtune=native -pipe"
-        
-        cp arch/x86/boot/bzImage ../../../../distro/vmlinuz
+    - name: Cache BusyBox build
+      id: busybox-cache
+      uses: actions/cache@v3
+      with:
+        path: busybox-build/busybox
+        key: busybox-${{ env.BUSYBOX_VERSION }}
         
     - name: Build BusyBox
+      if: steps.busybox-cache.outputs.cache-hit != 'true'
       run: |
-        cd build/rootfs
+        mkdir -p busybox-build
+        cd busybox-build
+        
         wget -q https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2
         tar xf busybox-${BUSYBOX_VERSION}.tar.bz2
         cd busybox-${BUSYBOX_VERSION}
@@ -168,22 +109,21 @@ jobs:
         make defconfig
         sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
         make -j$(nproc)
-        make CONFIG_PREFIX=../../../../distro install
         
-    - name: Build seatd
-      run: |
-        cd build/programs
-        wget -q https://git.sr.ht/~kennylevinsen/seatd/archive/${SEATD_VERSION}.tar.gz -O seatd.tar.gz
-        tar xf seatd.tar.gz
-        cd seatd-${SEATD_VERSION}
+        cp busybox ../busybox
         
-        meson setup build -Dprefix=/usr -Dbuiltin=enabled
-        ninja -C build
-        DESTDIR=../../../../distro ninja -C build install
+    - name: Cache Wayland build
+      id: wayland-cache
+      uses: actions/cache@v3
+      with:
+        path: wayland-install/
+        key: wayland-${{ env.WAYLAND_VERSION }}-${{ env.WAYLAND_PROTOCOLS_VERSION }}
         
     - name: Build Wayland libraries
+      if: steps.wayland-cache.outputs.cache-hit != 'true'
       run: |
-        cd build/programs
+        mkdir -p wayland-build wayland-install
+        cd wayland-build
         
         # Wayland
         wget -q https://gitlab.freedesktop.org/wayland/wayland/-/releases/${WAYLAND_VERSION}/downloads/wayland-${WAYLAND_VERSION}.tar.xz
@@ -191,7 +131,7 @@ jobs:
         cd wayland-${WAYLAND_VERSION}
         meson setup build -Dprefix=/usr -Ddocumentation=false
         ninja -C build
-        DESTDIR=../../../../distro ninja -C build install
+        DESTDIR=../../wayland-install ninja -C build install
         cd ..
         
         # Wayland protocols
@@ -200,214 +140,143 @@ jobs:
         cd wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}
         meson setup build -Dprefix=/usr
         ninja -C build
-        DESTDIR=../../../../distro ninja -C build install
+        DESTDIR=../../wayland-install ninja -C build install
         
-    - name: Create introibo installer program
+    - name: Cache seatd build
+      id: seatd-cache
+      uses: actions/cache@v3
+      with:
+        path: seatd-install/
+        key: seatd-${{ env.SEATD_VERSION }}
+        
+    - name: Build seatd
+      if: steps.seatd-cache.outputs.cache-hit != 'true'
       run: |
-        cat > build/programs/introibo.c << 'EOF'
-        #include <wayland-client.h>
-        #include <stdio.h>
-        #include <stdlib.h>
-        #include <string.h>
-        #include <unistd.h>
-
-        static struct wl_display *display = NULL;
-        static struct wl_compositor *compositor = NULL;
-        static struct wl_surface *surface = NULL;
-
-        static void registry_global(void *data, struct wl_registry *registry,
-                                   uint32_t name, const char *interface, uint32_t version) {
-            if (strcmp(interface, wl_compositor_interface.name) == 0) {
-                compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 1);
-            }
-        }
-
-        static void registry_global_remove(void *data, struct wl_registry *registry, uint32_t name) {}
-
-        static const struct wl_registry_listener registry_listener = {
-            .global = registry_global,
-            .global_remove = registry_global_remove,
-        };
-
-        int main(int argc, char *argv[]) {
-            printf("=== Introibo Linux Installer ===\n");
-            printf("Welcome to Introibo Linux!\n\n");
-            
-            display = wl_display_connect(NULL);
-            if (!display) {
-                fprintf(stderr, "Failed to connect to Wayland display\n");
-                printf("Running in text mode...\n\n");
-                printf("Installation options:\n");
-                printf("1. Install to disk\n");
-                printf("2. Live session\n");
-                printf("3. Configure system\n");
-                printf("\nSelect option (1-3): ");
-                
-                char input[10];
-                if (fgets(input, sizeof(input), stdin)) {
-                    printf("You selected: %s", input);
-                }
-                return 0;
-            }
-
-            struct wl_registry *registry = wl_display_get_registry(display);
-            wl_registry_add_listener(registry, &registry_listener, NULL);
-            wl_display_roundtrip(display);
-
-            if (compositor) {
-                surface = wl_compositor_create_surface(compositor);
-                printf("Wayland compositor connected successfully!\n");
-                printf("Graphical installer ready.\n");
-            }
-
-            wl_display_roundtrip(display);
-            
-            if (surface) wl_surface_destroy(surface);
-            if (compositor) wl_compositor_destroy(compositor);
-            wl_registry_destroy(registry);
-            wl_display_disconnect(display);
-            
-            return 0;
-        }
-        EOF
+        mkdir -p seatd-install
+        wget -q https://git.sr.ht/~kennylevinsen/seatd/archive/${SEATD_VERSION}.tar.gz -O seatd.tar.gz
+        tar xf seatd.tar.gz
+        cd seatd-${SEATD_VERSION}
         
-        gcc -O3 -march=native -o distro/usr/bin/introibo build/programs/introibo.c \
-          $(pkg-config --cflags --libs wayland-client) -lwayland-client
+        meson setup build -Dprefix=/usr -Dbuiltin=enabled
+        ninja -C build
+        DESTDIR=../seatd-install ninja -C build install
         
-    - name: Create login manager
+    - name: Build Azul programs
       run: |
-        cat > build/programs/login-manager.c << 'EOF'
-        #include <wayland-client.h>
-        #include <stdio.h>
-        #include <stdlib.h>
-        #include <string.h>
-        #include <unistd.h>
-
-        static struct wl_display *display = NULL;
-        static struct wl_compositor *compositor = NULL;
-
-        static void registry_global(void *data, struct wl_registry *registry,
-                                   uint32_t name, const char *interface, uint32_t version) {
-            if (strcmp(interface, wl_compositor_interface.name) == 0) {
-                compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 1);
-            }
-        }
-
-        static void registry_global_remove(void *data, struct wl_registry *registry, uint32_t name) {}
-
-        static const struct wl_registry_listener registry_listener = {
-            .global = registry_global,
-            .global_remove = registry_global_remove,
-        };
-
-        int main(int argc, char *argv[]) {
-            printf("=== Introibo Login Manager ===\n");
-            
-            display = wl_display_connect(NULL);
-            if (!display) {
-                fprintf(stderr, "Wayland display not available\n");
-                printf("Username: ");
-                char username[256];
-                if (fgets(username, sizeof(username), stdin)) {
-                    printf("Welcome, %s", username);
-                }
-                return 0;
-            }
-
-            struct wl_registry *registry = wl_display_get_registry(display);
-            wl_registry_add_listener(registry, &registry_listener, NULL);
-            wl_display_roundtrip(display);
-
-            printf("Login manager initialized with Wayland support\n");
-            
-            wl_registry_destroy(registry);
-            wl_display_disconnect(display);
-            return 0;
-        }
-        EOF
+        export PKG_CONFIG_PATH="${PWD}/wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wayland-install/usr/lib/pkgconfig:${PWD}/wayland-install/usr/share/pkgconfig"
         
-        gcc -O3 -march=native -o distro/usr/bin/login-manager build/programs/login-manager.c \
-          $(pkg-config --cflags --libs wayland-client) -lwayland-client
+        mkdir -p programs-build
         
-    - name: Create simple Wayland compositor
+        # Build libazul.so
+        cd libazul
+        gcc -O3 -march=x86-64 -shared -fPIC -o ../programs-build/libazul.so azul.c
+        cd ..
+        
+        # Build introibo installer
+        cd introibo
+        gcc -O3 -march=x86-64 -o ../programs-build/introibo main.c \
+          $(pkg-config --cflags --libs wayland-client) -I../wayland-install/usr/include
+        cd ..
+        
+        # Build alogin
+        cd alogin
+        gcc -O3 -march=x86-64 -o ../programs-build/alogin main.c \
+          $(pkg-config --cflags --libs wayland-client) -I../wayland-install/usr/include
+        cd ..
+        
+        # Build acomp
+        cd acomp
+        gcc -O3 -march=x86-64 -o ../programs-build/acomp main.c \
+          $(pkg-config --cflags --libs wayland-server) -I../wayland-install/usr/include
+        cd ..
+        
+    - name: Upload userspace artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: userspace-programs
+        path: |
+          programs-build/
+          busybox-build/busybox
+          wayland-install/
+          seatd-install/
+        retention-days: 1
+
+  build-iso:
+    needs: [build-kernel, build-userspace]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install ISO tools
       run: |
-        cat > build/programs/compositor.c << 'EOF'
-        #include <wayland-server.h>
-        #include <stdio.h>
-        #include <stdlib.h>
-        #include <signal.h>
-
-        static struct wl_display *display = NULL;
-        static bool running = true;
-
-        static void handle_signal(int sig) {
-            running = false;
-        }
-
-        int main(int argc, char *argv[]) {
-            printf("=== Introibo Wayland Compositor ===\n");
-            
-            signal(SIGINT, handle_signal);
-            signal(SIGTERM, handle_signal);
-            
-            display = wl_display_create();
-            if (!display) {
-                fprintf(stderr, "Failed to create Wayland display\n");
-                return 1;
-            }
-
-            const char *socket = wl_display_add_socket_auto(display);
-            if (!socket) {
-                fprintf(stderr, "Failed to add socket\n");
-                wl_display_destroy(display);
-                return 1;
-            }
-
-            printf("Compositor running on socket: %s\n", socket);
-            setenv("WAYLAND_DISPLAY", socket, 1);
-            
-            printf("Press Ctrl+C to stop\n");
-            
-            while (running) {
-                wl_display_flush_clients(display);
-                wl_event_loop_dispatch(wl_display_get_event_loop(display), 100);
-            }
-            
-            printf("\nShutting down compositor...\n");
-            wl_display_destroy(display);
-            
-            return 0;
-        }
-        EOF
+        sudo apt-get update
+        sudo apt-get install -y cpio genisoimage syslinux isolinux tree
         
-        gcc -O3 -march=native -o distro/usr/bin/introibo-compositor build/programs/compositor.c \
-          $(pkg-config --cflags --libs wayland-server) -lwayland-server
+    - name: Download kernel
+      uses: actions/download-artifact@v4
+      with:
+        name: kernel-bzImage
+        path: artifacts/
         
-    - name: Create libazul.so stub
+    - name: Download userspace
+      uses: actions/download-artifact@v4
+      with:
+        name: userspace-programs
+        path: artifacts/
+        
+    - name: Create root filesystem
       run: |
-        cat > build/programs/libazul.c << 'EOF'
-        #include <stdio.h>
-
-        void azul_init(void) {
-            printf("libazul v1.0.0 initialized\n");
-        }
-
-        const char* azul_version(void) {
-            return "1.0.0-introibo";
-        }
-
-        int azul_render(void) {
-            return 0;
-        }
-        EOF
+        mkdir -p distro/{bin,sbin,lib,lib64,usr,etc,dev,proc,sys,run,tmp}
+        mkdir -p distro/usr/{bin,lib,share}
+        mkdir -p distro/etc/init.d
+        mkdir -p distro/run/user/0
         
-        gcc -O3 -march=native -shared -fPIC -o distro/usr/lib/libazul.so build/programs/libazul.c
+        # Install BusyBox
+        cd distro
+        cp ../artifacts/busybox bin/busybox
+        chmod +x bin/busybox
         
-    - name: Setup rootfs structure
+        # Create BusyBox symlinks
+        for cmd in $(bin/busybox --list); do
+          ln -sf busybox bin/$cmd 2>/dev/null || true
+        done
+        cd ..
+        
+        # Install Azul programs
+        cp artifacts/programs-build/introibo distro/usr/bin/
+        cp artifacts/programs-build/alogin distro/usr/bin/
+        cp artifacts/programs-build/acomp distro/usr/bin/
+        cp artifacts/programs-build/libazul.so distro/usr/lib/
+        chmod +x distro/usr/bin/*
+        
+        # Install Wayland libraries
+        cp -r artifacts/wayland-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
+        cp -r artifacts/wayland-install/usr/lib/* distro/usr/lib/ 2>/dev/null || cp -r artifacts/wayland-install/usr/lib/lib*.so* distro/usr/lib/ 2>/dev/null || true
+        
+        # Install seatd
+        cp -r artifacts/seatd-install/usr/* distro/usr/ 2>/dev/null || true
+        
+        # Copy system libraries
+        for lib in /lib/x86_64-linux-gnu/libc.so.6 \
+                   /lib/x86_64-linux-gnu/libm.so.6 \
+                   /lib/x86_64-linux-gnu/libpthread.so.0 \
+                   /lib/x86_64-linux-gnu/libdl.so.2 \
+                   /lib/x86_64-linux-gnu/librt.so.1 \
+                   /lib64/ld-linux-x86-64.so.2; do
+            [ -f "$lib" ] && cp -L "$lib" distro/lib64/ || true
+        done
+        
+        # Copy additional dependencies
+        cp -L /usr/lib/x86_64-linux-gnu/libffi*.so* distro/usr/lib/ 2>/dev/null || true
+        cp -L /usr/lib/x86_64-linux-gnu/libexpat*.so* distro/usr/lib/ 2>/dev/null || true
+        
+    - name: Setup init system
       run: |
         cd distro
         
-        # Create essential device nodes
+        # Create device nodes
         sudo mknod -m 666 dev/null c 1 3
         sudo mknod -m 666 dev/zero c 1 5
         sudo mknod -m 666 dev/random c 1 8
@@ -415,157 +284,51 @@ jobs:
         sudo mknod -m 666 dev/tty c 5 0
         sudo mknod -m 666 dev/console c 5 1
         
-        # Create init script
-        cat > init << 'INITEOF'
-        #!/bin/sh
-        
-        export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-        
-        mount -t proc proc /proc
-        mount -t sysfs sysfs /sys
-        mount -t devtmpfs devtmpfs /dev
-        mount -t tmpfs tmpfs /tmp
-        
-        mkdir -p /dev/shm /dev/pts
-        mount -t tmpfs tmpfs /dev/shm
-        mount -t devpts devpts /dev/pts
-        
-        export XDG_RUNTIME_DIR=/run/user/0
-        mkdir -p "$XDG_RUNTIME_DIR"
-        chmod 700 "$XDG_RUNTIME_DIR"
-        
-        # Start seatd
-        /usr/bin/seatd -g video &
-        sleep 1
-        
-        # Launch installer on first boot
-        if [ ! -f /etc/.installed ]; then
-            clear
-            /usr/bin/introibo
-            echo "Press Enter to continue..."
-            read
-        fi
-        
-        # Start compositor in background
-        /usr/bin/introibo-compositor &
-        COMPOSITOR_PID=$!
-        sleep 1
-        
-        # Start login manager
-        /usr/bin/login-manager
-        
-        # Drop to shell
-        exec /bin/sh
-        INITEOF
-        
+        # Copy init script from repo
+        cp ../config/init init
         chmod +x init
         
-        # Create fstab
-        cat > etc/fstab << 'EOF'
-        proc /proc proc defaults 0 0
-        sysfs /sys sysfs defaults 0 0
-        devtmpfs /dev devtmpfs defaults 0 0
-        EOF
-        
-        # Create hostname
-        echo "introibo" > etc/hostname
-        
-        # Create basic passwd
-        cat > etc/passwd << 'EOF'
-        root:x:0:0:root:/root:/bin/sh
-        EOF
-        
-        # Create group file
-        cat > etc/group << 'EOF'
-        root:x:0:
-        video:x:44:
-        EOF
-        
-    - name: Copy system libraries
-      run: |
-        # Copy essential libraries
-        mkdir -p distro/lib64 distro/usr/lib
-        
-        for lib in /lib/x86_64-linux-gnu/libc.so.6 \
-                   /lib/x86_64-linux-gnu/libm.so.6 \
-                   /lib/x86_64-linux-gnu/libpthread.so.0 \
-                   /lib/x86_64-linux-gnu/libdl.so.2 \
-                   /lib/x86_64-linux-gnu/librt.so.1 \
-                   /lib64/ld-linux-x86-64.so.2; do
-            if [ -f "$lib" ]; then
-                cp -L "$lib" distro/lib64/ || true
-            fi
-        done
-        
-        # Copy wayland libraries
-        cp -rL /usr/lib/x86_64-linux-gnu/libwayland-*.so* distro/usr/lib/ || true
-        cp -rL /usr/lib/x86_64-linux-gnu/libffi*.so* distro/usr/lib/ || true
-        cp -rL /usr/lib/x86_64-linux-gnu/libexpat*.so* distro/usr/lib/ || true
-        
-    - name: Install AUR prerequisites
-      run: |
-        cd distro/usr/bin
-        
-        # Copy git
-        cp /usr/bin/git .
-        
-        # Copy make and build tools
-        cp /usr/bin/make .
-        cp /usr/bin/gcc .
-        cp /usr/bin/g++ .
-        cp /usr/bin/ld .
-        
-        # Copy pacman stub (future AUR support)
-        cat > pacman << 'EOF'
-        #!/bin/sh
-        echo "Introibo AUR wrapper v1.0"
-        echo "Usage: pacman -S <package>"
-        echo "AUR support coming soon!"
-        EOF
-        chmod +x pacman
+        # Copy config files
+        cp ../config/fstab etc/fstab
+        cp ../config/hostname etc/hostname
+        cp ../config/passwd etc/passwd
+        cp ../config/group etc/group
         
     - name: Create initramfs
       run: |
         cd distro
-        find . | cpio -H newc -o | gzip > ../build/iso/initramfs.img
+        find . | cpio -H newc -o | gzip > ../initramfs.img
         
-    - name: Create bootable ISO
+    - name: Build ISO
       run: |
-        mkdir -p build/iso/boot/isolinux
+        mkdir -p iso/boot/{isolinux,kernel}
         
         # Copy kernel
-        cp distro/vmlinuz build/iso/boot/
+        cp artifacts/bzImage iso/boot/kernel/vmlinuz
+        cp initramfs.img iso/boot/kernel/
         
-        # Copy syslinux files
-        cp /usr/lib/ISOLINUX/isolinux.bin build/iso/boot/isolinux/
-        cp /usr/lib/syslinux/modules/bios/ldlinux.c32 build/iso/boot/isolinux/
+        # Copy bootloader
+        cp /usr/lib/ISOLINUX/isolinux.bin iso/boot/isolinux/
+        cp /usr/lib/syslinux/modules/bios/ldlinux.c32 iso/boot/isolinux/
         
-        # Create isolinux config
-        cat > build/iso/boot/isolinux/isolinux.cfg << 'EOF'
-        DEFAULT introibo
-        PROMPT 0
-        TIMEOUT 50
-        
-        LABEL introibo
-            KERNEL /boot/vmlinuz
-            APPEND initrd=/boot/initramfs.img quiet loglevel=3
-        EOF
+        # Copy isolinux config from repo
+        cp config/isolinux.cfg iso/boot/isolinux/
         
         # Create ISO
-        genisoimage -o introibo-linux.iso \
+        genisoimage -o alinux.iso \
           -b boot/isolinux/isolinux.bin \
           -c boot/isolinux/boot.cat \
           -no-emul-boot \
           -boot-load-size 4 \
           -boot-info-table \
-          -J -R -V "Introibo Linux" \
-          build/iso
+          -J -R -V "ALinux" \
+          iso
           
-    - name: Upload ISO artifact
+    - name: Upload ISO
       uses: actions/upload-artifact@v4
       with:
-        name: introibo-linux-iso
-        path: introibo-linux.iso
+        name: alinux-iso
+        path: alinux.iso
         retention-days: 30
         
     - name: Create release
@@ -573,25 +336,28 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ github.run_number }}
-        name: Introibo Linux Build ${{ github.run_number }}
-        files: introibo-linux.iso
+        name: ALinux Build ${{ github.run_number }}
+        files: alinux.iso
         body: |
-          ## Introibo Linux - Build ${{ github.run_number }}
+          ## ALinux - Build ${{ github.run_number }}
           
-          A minimal, optimized Linux distribution with:
-          - Custom Wayland compositor
-          - Graphical installer (introibo)
-          - Login manager
-          - AUR support (via pacman wrapper)
-          - CachyOS-inspired kernel optimizations
-          - libazul.so preinstalled
+          A minimal, high-performance Linux distribution powered by the Azul GUI system.
+          
+          ### Features
+          - Custom Azul GUI applications (introibo, alogin, acomp)
+          - libazul.so graphics library
+          - Optimized kernel with CachyOS patches
+          - Wayland-native compositor
+          - CLI-focused with powerful userland tools
           
           ### Testing
           ```bash
-          qemu-system-x86_64 -m 2G -cdrom introibo-linux.iso -enable-kvm
+          qemu-system-x86_64 -m 2G -cdrom alinux.iso -enable-kvm
           ```
           
-          ### Boot on real hardware
-          Write to USB: `dd if=introibo-linux.iso of=/dev/sdX bs=1M`
+          ### Boot on hardware
+          ```bash
+          sudo dd if=alinux.iso of=/dev/sdX bs=1M status=progress
+          ```
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
