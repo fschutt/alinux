@@ -1,419 +1,93 @@
-# ALinux
+# alinux
 
-> A blazingly fast, minimal Linux distribution powered by the Azul GUI framework and modern Rust applications
+> modern linux distribution, focused around the azul.rs GUI toolkit
 
-<p align="center">
+<p>
   <img src="https://img.shields.io/badge/kernel-6.12.1-blue" />
   <img src="https://img.shields.io/badge/init-custom-green" />
   <img src="https://img.shields.io/badge/compositor-wayland-purple" />
-  <img src="https://img.shields.io/badge/language-rust-orange" />
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" />
 </p>
 
-**ALinux** (Azul Linux) is a from-scratch Linux distribution built for performance and simplicity. Inspired by the Azul GUI framework which uses Mozilla WebRender for GPU-accelerated rendering with CSS/DOM-based layouts, ALinux ships exclusively with Rust-based applications and tools, delivering a modern, fast, and efficient computing experience.
+**alinux** (Azul Linux) is a from-scratch Linux distribution built for performance and simplicity. 
+Inspired by the Azul.rs GUI framework for GPU-accelerated rendering and a custom layout engine, alinux 
+ships mostly with Rust-based applications and tools. The core "operating system" consists of:
 
----
+- User-friendly installer: introibo
+- Login manager / Greeter: alogin
+- Wayland Compositor: acomp
+- Desktop Environment: ade
+- Package manager: apkg (can install packages from AUR, snap, flatpak, etc.)
+- A settings application to manage various settings
 
-## 🎯 Philosophy
+The idea is to not make a "Server OS" or "OS for corporate installations" like RHEL or OpenSuse or 
+whatever, but just make a simple "User OS", that is:
 
-- **Performance First**: CachyOS-inspired kernel optimizations, 1000Hz scheduler, aggressive CPU tuning
-- **Rust Everything**: Every shipped application is written in Rust for memory safety and speed
-- **Azul GUI Native**: All graphical applications use the Azul framework for consistent, GPU-accelerated UIs
-- **Minimal by Design**: Zero bloat - only essential tools and libraries included
-- **CLI-Focused**: Powerful command-line tools with optional graphical interfaces
+- Core Kernel with drivers, compiled for performance instead of old hardware support
+- Pre-installed graphics drivers, media codecs, etc. - Steam should work out-of-the-box
+- Preinstalled useful CLI utilities (mostly C/Rust utilities)
+- Preinstalled useful GUI utilities (mostly using the Azul GUI toolkit or KDE applications)
+- Package manager that can install + update from MANY different sources, but doesn't need deployment functionality (no uploading)
+  - This is so that it becomes irrelevant whether a software is available as a pure binary
+  - For source-available software like Python libraries, etc. the package manager will either automatically build-on-install with docker or install the source inside of a system-defined directory
+  - The window manager then picks up on these applications in the standard directories
+  - Yes, this breaks any "security" advancements of flatpak / snap, but adds more possbilities to install software
 
----
+The scope of the "project" is therefore less to be some big distro and more to be a "template" 
+to "build your own Linux distribution by **forking** this repository". The entire ISO gets built
+by GitHub Actions, which makes deployment very easy.
 
-## ✨ Features
+This repo therefore hold all the "GUI utilities" that will need to be developed specifically for this
+operating system. Otherwise, the build.yml script just clones the other software and builds it from source (with caching).
 
-### 🚀 Core System
+The system ships with git, gcc, cmake and other development tools out of the box. However, the goal is to not bloat the
+system too much, to keep it under 500MB for the final ISO, in order to make it possible to use as a "testing OS"
 
-- **Optimized Linux Kernel 6.12.1**
-  - CachyOS performance patches
-  - CPU-specific optimizations (ZEN4, Alder Lake, etc.)
-  - 1000Hz scheduler for ultra-responsive desktop experience
-  - Full DRM/KMS support for Intel, AMD, and NVIDIA graphics
-  
-- **Custom Wayland Compositor (acomp)**
-  - Minimal, purpose-built compositor
-  - GPU-accelerated rendering via Azul/WebRender
-  - Native Rust implementation for maximum performance
-  
-- **libazul.so Graphics Library**
-  - Mozilla WebRender rendering engine for hardware-accelerated 2D graphics
-  - CSS/DOM-based layout system with flexbox support
-  - Functional composition over inheritance
-  - Efficient re-rendering only when necessary
+## Installation
 
-### 🎨 Graphical Applications
-
-#### **Introibo Installer**
-Windows-inspired first-boot experience with a beautiful, GPU-accelerated installation wizard. Configure your system, partition drives, and set preferences through an intuitive Azul-powered interface.
-
-#### **Alogin Manager**
-Sleek Wayland-native login manager featuring:
-- Smooth animations and transitions
-- Session management
-- User switching
-- Auto-login configuration
-
-### 🛠️ Essential Rust CLI Tools
-
-ALinux ships with modern Rust alternatives to classic Unix tools:
-
-#### **File Management**
-- **eza** - Modern ls replacement with colors, icons, and Git integration
-- **fd** - Fast and user-friendly alternative to find
-- **yazi** - Blazing fast terminal file manager based on async I/O
-- **zoxide** - Smarter cd command supporting all major shells
-- **bat** - cat clone with syntax highlighting and Git integration
-
-#### **System Monitoring**
-- **procs** - Modern replacement for ps with color-coded, structured process views
-- **bottom** - System monitor with graphical visualization widgets for CPU, RAM, disk, and temperature
-- **bandwhich** - Network utilization monitor by process, connection, and remote IP
-- **zenith** - Like top/htop but with zoomable charts, network, and disk usage
-
-#### **Text Processing**
-- **ripgrep** - Lightning-fast grep alternative that respects .gitignore
-- **sd** - Intuitive find & replace CLI (sed alternative)
-- **tealdeer** - Very fast implementation of tldr for simplified man pages
-
-#### **Development Tools**
-- **delta** - Enhanced git diff viewer with extensive styling options
-- **starship** - Minimal, blazing-fast, infinitely customizable shell prompt
-- **cargo** - Rust package manager and build system
-- **rustc** - Rust compiler with full toolchain
-
-#### **Utilities**
-- **ouch** - Painless compression and decompression
-- **dua-cli** - Fast tool to learn about disk usage
-- **grex** - Generate regular expressions from test cases
-- **hyperfine** - Command-line benchmarking tool
-
-### 🔧 System Tools
-
-- **BusyBox** - Essential Unix utilities in a single binary
-- **seatd** - Minimal seat management daemon for Wayland
-- **Git** - Version control for AUR package building
-- **GCC/Make** - Build tools for compiling from source
-
----
-
-## 📦 Installation
-
-### Quick Start with QEMU
+### QEMU 
 
 ```bash
-# Download the latest ISO
-wget https://github.com/yourusername/alinux/releases/latest/download/alinux.iso
-
-# Test in virtual machine
+wget https://github.com/fschutt/alinux/releases/latest/download/alinux.iso
 qemu-system-x86_64 -m 2G -cdrom alinux.iso -enable-kvm
 ```
 
-### Install to USB Drive
+### USB Stick
 
 ```bash
 sudo dd if=alinux.iso of=/dev/sdX bs=1M status=progress
 ```
 
-### Install to Disk
+## Building from Source
 
-Boot from the ISO and run the Introibo installer:
+ALinux uses GitHub Actions for reproducible builds. You'll need to either 
+manually follow the steps in the `alinux.yml` or just fork the repository
 
-1. **Welcome Screen** - Choose language and keyboard layout
-2. **Disk Partitioning** - Automatic or manual partitioning
-3. **User Setup** - Create your user account
-4. **Package Selection** - Choose additional Rust applications
-5. **Install** - System copies to disk with optimizations
-6. **Reboot** - Remove installation media and boot into ALinux
+The goal is that you can **make your own distribution** within 10 minutes, 
+the goal is not to build the perfect OS for everyone. 
 
----
+- If you want to tune the performance, look at the `config/kernel.config` file.
+- If you want to ship your application by default in the ISO, add it to the GitHub .yml
+- The ISO ships with libazul.so out of the box, so it's easy for GUI applications to use that
 
-## 🏗️ Building from Source
-
-ALinux uses GitHub Actions for reproducible builds. To build locally:
-
-```bash
-git clone https://github.com/yourusername/alinux.git
-cd alinux
-
-# Trigger GitHub Actions build
-git commit --allow-empty -m "Build ISO"
-git push
-
-# Or build locally (requires Docker)
-./scripts/build-local.sh
-```
-
-### Repository Structure
-
-```
-alinux/
-├── .github/workflows/
-│   └── build.yml              # CI/CD pipeline
-├── config/
-│   ├── kernel.config          # Kernel configuration
-│   ├── init                   # Init script
-│   ├── isolinux.cfg           # Bootloader config
-│   └── ...                    # System config files
-├── libazul/                   # Azul graphics library
-├── introibo/                  # Installer GUI
-├── alogin/                    # Login manager
-├── acomp/                     # Wayland compositor
-└── README.md
-```
-
----
-
-## ⚙️ Configuration
-
-### Kernel Optimization
-
-Edit `config/kernel.config` to target your specific CPU:
-
-```bash
-# AMD Ryzen 7000 series
-CONFIG_MZEN4=y
-
-# AMD Ryzen 5000 series
-CONFIG_MZEN3=y
-
-# Intel 12th gen (Alder Lake)
-CONFIG_MALDERLAKE=y
-
-# Intel 13th/14th gen (Raptor Lake)
-CONFIG_MRAPTORLAKE=y
-
-# Generic modern x86-64 (safest)
-CONFIG_GENERIC_CPU=y
-```
-
-### Adding Rust Applications
-
-Create a new directory for your app:
-
-```bash
-mkdir myapp
-cd myapp
-
-# Create main.rs with your Rust code
-cat > main.rs << 'EOF'
-fn main() {
-    println!("Hello from myapp!");
-}
-EOF
-```
-
-Update `.github/workflows/build.yml` to include your app:
-
-```yaml
-- name: Build myapp
-  run: |
-    cd myapp
-    rustc -O --target x86_64-unknown-linux-musl \
-      -o ../programs-build/myapp main.rs
-```
-
----
-
-## 🎨 Developing Azul Applications
-
-### Hello World Example
-
-```rust
-use azul::prelude::*;
-
-struct MyApp {
-    counter: usize,
-}
-
-extern "C" fn render(data: &mut RefAny, _: &mut LayoutInfo) -> StyledDom {
-    let app = data.downcast_ref::<MyApp>()?;
-    
-    Dom::body()
-        .with_child(
-            Dom::text(format!("Count: {}", app.counter))
-                .with_inline_style("font-size: 24px;")
-        )
-        .with_child(
-            Button::new("Increment")
-                .onmouseup(increment, data.clone())
-                .dom()
-        )
-        .style(Css::empty())
-}
-
-extern "C" fn increment(data: &mut RefAny, _: &mut CallbackInfo) -> Update {
-    let mut app = data.downcast_mut::<MyApp>()?;
-    app.counter += 1;
-    Update::RefreshDom
-}
-
-fn main() {
-    let app = App::new(RefAny::new(MyApp { counter: 0 }), AppConfig::default());
-    app.run(WindowCreateOptions::new(render));
-}
-```
-
-### Building Against libazul.so
-
-```bash
-# Link your application against the system Azul library
-rustc -O -L /usr/lib -lazul -o myapp main.rs
-
-# Or with Cargo
-cargo build --release
-```
-
----
-
-## 📚 Package Management
-
-### Installing from Source
-
-ALinux includes `git`, `gcc`, and `make` for building packages:
-
-```bash
-# Clone a Rust project
-git clone https://github.com/user/awesome-rust-tool.git
-cd awesome-rust-tool
-
-# Build and install
-cargo build --release
-sudo cp target/release/awesome-rust-tool /usr/bin/
-```
-
-### AUR Compatibility (Coming Soon)
-
-While not Arch-based, ALinux aims to support AUR package building:
-
-```bash
-# Future functionality
-alinux-install package-name
-```
-
----
-
-## 🔬 Technical Details
+## Technical Details
 
 ### Boot Process
 
 1. **ISOLINUX** loads kernel and initramfs
-2. **Kernel** initializes hardware, mounts initramfs
-3. **Init script** mounts filesystems, starts services
+2. **kernel** initializes hardware, mounts initramfs
+3. **init script** mounts filesystems, starts services
 4. **seatd** starts for seat management
-5. **Introibo** runs on first boot for system setup
-6. **acomp** starts Wayland compositor
+5. **introibo** runs on first boot for system setup
+6. **acomp** is the Wayland compositor
 7. **alogin** displays login manager
-8. **User session** starts with your choice of shell/environment
+8. **ade** is the environment which the
 
-### System Architecture
+## License
 
-```
-┌─────────────────────────────────────┐
-│     Azul GUI Applications           │
-│  (Introibo, Alogin, custom apps)    │
-├─────────────────────────────────────┤
-│         libazul.so                  │
-│    (WebRender + CSS/DOM)            │
-├─────────────────────────────────────┤
-│    acomp (Wayland Compositor)       │
-├─────────────────────────────────────┤
-│      Wayland Protocol               │
-├─────────────────────────────────────┤
-│    DRM/KMS (Direct Rendering)       │
-├─────────────────────────────────────┤
-│   Linux Kernel 6.12.1 (Optimized)   │
-└─────────────────────────────────────┘
-```
-
-### Performance Characteristics
-
-- **Boot Time**: ~3-5 seconds to login screen (SSD)
-- **Memory Usage**: ~150MB idle (with compositor)
-- **ISO Size**: ~80-120MB compressed
-- **Install Size**: ~300-500MB minimal system
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Here's how:
-
-1. **Fork the repository**
-2. **Create a feature branch**: `git checkout -b feature/amazing-tool`
-3. **Add your Rust application** to the appropriate directory
-4. **Update the CI workflow** to build your app
-5. **Test locally** or let CI build it
-6. **Submit a pull request**
-
-### Contribution Guidelines
-
-- All applications must be written in Rust
-- Graphical apps should use the Azul framework
-- Follow Rust naming conventions (`snake_case` for files)
-- Include a README.md in your app directory
-- Add yourself to CONTRIBUTORS.md
-
----
-
-## 📊 Comparison
-
-| Feature | ALinux | Alpine | Arch | Ubuntu |
-|---------|---------|---------|------|--------|
-| Init System | Custom | OpenRC | systemd | systemd |
-| Package Manager | Source/Cargo | apk | pacman | apt |
-| Default Language | Rust | C | Mixed | Mixed |
-| ISO Size | ~100MB | ~130MB | ~800MB | ~3GB |
-| Boot Time | 3-5s | 5-8s | 10-15s | 20-30s |
-| GUI Framework | Azul | GTK/Qt | GTK/Qt | GNOME |
-| Compositor | acomp | Various | Various | Mutter |
-
----
-
-## 🐛 Troubleshooting
-
-### Black screen after boot
-- Your GPU driver may not be included. Edit `config/kernel.config`:
-  - Intel: Ensure `CONFIG_DRM_I915=y`
-  - AMD: Ensure `CONFIG_DRM_AMDGPU=y`
-  - NVIDIA: Ensure `CONFIG_DRM_NOUVEAU=y`
-
-### Compositor won't start
-```bash
-# Check if Wayland socket exists
-echo $WAYLAND_DISPLAY
-
-# Manually start compositor
-/usr/bin/acomp &
-
-# Check logs
-dmesg | grep drm
-```
-
-### Programs won't link against libazul.so
-```bash
-# Add library path
-export LD_LIBRARY_PATH=/usr/lib:$LD_LIBRARY_PATH
-
-# Or add to /etc/ld.so.conf.d/azul.conf
-echo "/usr/lib" | sudo tee /etc/ld.so.conf.d/azul.conf
-sudo ldconfig
-```
-
----
-
-## 📜 License
-
-ALinux is MIT licensed. Individual components may have different licenses:
+While the kernel is GPL-2.0 licensed, alinux itself (the userspace programs, compositor, etc.) are MIT licensed.
 
 - Linux Kernel: GPL-2.0
 - BusyBox: GPL-2.0
-- Azul Framework: LGPL-3.0 with static linking exception
-- Rust applications: MIT (unless otherwise specified)
-
-<p align="center">
-  <strong>Built with 🦀 Rust and ❤️ by the ALinux community</strong>
-</p>
+- Azul GUI framework: MIT
+- Rust applications: MIT
