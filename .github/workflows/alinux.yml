@@ -236,7 +236,9 @@ jobs:
   build-iso:
     needs: [build-kernel, build-userspace]
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: write # necessary for releasing to GH
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
