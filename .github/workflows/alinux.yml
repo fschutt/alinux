@@ -21,7 +21,7 @@ jobs:
   build-kernel:
     runs-on: ubuntu-latest
     outputs:
-      cache-key: ${{ steps.kernel-cache.outputs.cache-hit }}
+      cache-hit: ${{ steps.kernel-cache.outputs.cache-hit }}
     
     steps:
     - name: Checkout repository
@@ -33,6 +33,7 @@ jobs:
       with:
         path: |
           kernel-build/bzImage
+          kernel-build/modules_install/
           kernel-build/version.txt
         key: kernel-${{ env.KERNEL_VERSION }}-${{ hashFiles('config/kernel.config') }}
         
@@ -61,19 +62,26 @@ jobs:
         echo "Starting kernel build..."
         make -j$(nproc) CFLAGS="-O3 -march=x86-64 -mtune=generic -pipe"
         
-        # Debug: show directory structure
-        echo "=== Directory structure ==="
-        tree -L 3 arch/x86/boot || find arch/x86/boot -type f
+        # Build and install kernel modules
+        make modules -j$(nproc)
+        make modules_install INSTALL_MOD_PATH=../modules_install
         
         # Copy to cache directory
         cp arch/x86/boot/bzImage ../bzImage
         echo "${KERNEL_VERSION}" > ../version.txt
         
-    - name: Upload kernel artifact
+    - name: Upload kernel artifact (bzImage)
       uses: actions/upload-artifact@v4
       with:
         name: kernel-bzImage
         path: kernel-build/bzImage
+        retention-days: 1
+        
+    - name: Upload kernel modules artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: kernel-modules
+        path: kernel-build/modules_install/
         retention-days: 1
 
   build-userspace:
@@ -83,7 +91,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Install dependencies
+    - name: Install dependencies (Expanded for "Batteries Included")
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -91,7 +99,19 @@ jobs:
           ninja-build meson libwayland-dev \
           wayland-protocols libxkbcommon-dev \
           libinput-dev libdrm-dev libgbm-dev \
-          libpixman-1-dev libseat-dev libudev-dev
+          libpixman-1-dev libseat-dev libudev-dev \
+          # Graphics, Fonts, Core
+          libgl1-mesa-dev libvulkan-dev \
+          libfreetype6-dev libfontconfig1-dev libharfbuzz-dev \
+          libglib2.0-dev libxcb-randr0-dev libxcb-xfixes0-dev \
+          libpci-dev libusb-1.0-0-dev \
+          zlib1g-dev libbz2-dev liblzma-dev libzstd-dev \
+          libstdc++-dev \
+          # Network Utilities (Modern choices)
+          wpasupplicant libnl-3-dev libnl-genl-3-dev \
+          iproute2 isc-dhcp-client \
+          # Font Content
+          fonts-dejavu-core
           
     - name: Cache BusyBox build
       id: busybox-cache
@@ -112,8 +132,6 @@ jobs:
         
         make defconfig
         sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
-        
-        # Disable tc (traffic control) - requires newer kernel headers
         sed -i 's/CONFIG_TC=y/# CONFIG_TC is not set/' .config
         
         make -j$(nproc)
@@ -166,16 +184,10 @@ jobs:
         tar xf seatd.tar.gz
         cd seatd-${SEATD_VERSION}
         
-        # Check available meson options
-        echo "=== Available meson options ==="
-        meson configure 2>/dev/null || true
-        
-        # Build seatd (builtin option removed in newer versions)
-        if meson setup build -Dprefix=/usr 2>&1 | tee /tmp/meson-setup.log; then
+        if meson setup build -Dprefix=/usr; then
           echo "=== Meson setup successful ==="
         else
-          echo "=== Meson setup failed, showing log ==="
-          cat build/meson-logs/meson-log.txt 2>/dev/null || cat /tmp/meson-setup.log
+          echo "=== Meson setup failed ==="
           exit 1
         fi
         
@@ -237,7 +249,7 @@ jobs:
     needs: [build-kernel, build-userspace]
     runs-on: ubuntu-latest
     permissions:
-      contents: write # necessary for releasing to GH
+      contents: write
 
     steps:
     - name: Checkout repository
@@ -254,16 +266,22 @@ jobs:
         name: kernel-bzImage
         path: artifacts/
         
+    - name: Download kernel modules
+      uses: actions/download-artifact@v4
+      with:
+        name: kernel-modules
+        path: artifacts/
+        
     - name: Download userspace
       uses: actions/download-artifact@v4
       with:
         name: userspace-programs
         path: artifacts/
         
-    - name: Create root filesystem
+    - name: Create root filesystem (Expanded)
       run: |
         mkdir -p distro/{bin,sbin,lib,lib64,usr,etc,dev,proc,sys,run,tmp}
-        mkdir -p distro/usr/{bin,lib,share}
+        mkdir -p distro/usr/{bin,sbin,lib,share}
         mkdir -p distro/etc/init.d
         mkdir -p distro/run/user/0
         
@@ -271,12 +289,13 @@ jobs:
         cd distro
         cp ../artifacts/busybox-build/busybox bin/busybox
         chmod +x bin/busybox
-        
-        # Create BusyBox symlinks
         for cmd in $(bin/busybox --list); do
           ln -sf busybox bin/$cmd 2>/dev/null || true
         done
         cd ..
+        
+        # Install kernel modules
+        cp -r artifacts/modules_install/lib/modules distro/lib/
         
         # Install Azul programs
         cp artifacts/programs-build/introibo distro/usr/bin/
@@ -285,26 +304,64 @@ jobs:
         cp artifacts/programs-build/libazul.so distro/usr/lib/
         chmod +x distro/usr/bin/*
         
-        # Install Wayland libraries
+        # Install Wayland/seatd libraries and binaries
         cp -r artifacts/wayland-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
         cp -r artifacts/wayland-install/usr/lib/* distro/usr/lib/ 2>/dev/null || cp -r artifacts/wayland-install/usr/lib/lib*.so* distro/usr/lib/ 2>/dev/null || true
-        
-        # Install seatd
         cp -r artifacts/seatd-install/usr/* distro/usr/ 2>/dev/null || true
         
-        # Copy system libraries
+        # Copy system libraries (FULL EXPANDED LIST)
         for lib in /lib/x86_64-linux-gnu/libc.so.6 \
                    /lib/x86_64-linux-gnu/libm.so.6 \
                    /lib/x86_64-linux-gnu/libpthread.so.0 \
                    /lib/x86_64-linux-gnu/libdl.so.2 \
                    /lib/x86_64-linux-gnu/librt.so.1 \
-                   /lib64/ld-linux-x86-64.so.2; do
-            [ -f "$lib" ] && cp -L "$lib" distro/lib64/ || true
+                   /lib64/ld-linux-x86-64.so.2 \
+                   /usr/lib/x86_64-linux-gnu/libGL.so* \
+                   /usr/lib/x86_64-linux-gnu/libGLX.so* \
+                   /usr/lib/x86_64-linux-gnu/libEGL.so* \
+                   /usr/lib/x86_64-linux-gnu/libdrm.so* \
+                   /usr/lib/x86_64-linux-gnu/libgudev-1.0.so* \
+                   /usr/lib/x86_64-linux-gnu/libxkbcommon.so* \
+                   /usr/lib/x86_64-linux-gnu/libinput.so* \
+                   /usr/lib/x86_64-linux-gnu/libudev.so* \
+                   /usr/lib/x86_64-linux-gnu/libexpat.so* \
+                   /usr/lib/x86_64-linux-gnu/libfreetype.so* \
+                   /usr/lib/x86_64-linux-gnu/libfontconfig.so* \
+                   /usr/lib/x86_64-linux-gnu/libharfbuzz.so* \
+                   /usr/lib/x86_64-linux-gnu/libz.so* \
+                   /usr/lib/x86_64-linux-gnu/libbz2.so* \
+                   /usr/lib/x86_64-linux-gnu/liblzma.so* \
+                   /usr/lib/x86_64-linux-gnu/libzstd.so* \
+                   /usr/lib/x86_64-linux-gnu/libglib-2.0.so* \
+                   /usr/lib/x86_64-linux-gnu/libgobject-2.0.so* \
+                   /usr/lib/x86_64-linux-gnu/libffi.so* \
+                   /usr/lib/x86_64-linux-gnu/libpci.so* \
+                   /usr/lib/x86_64-linux-gnu/libusb-1.0.so* \
+                   /usr/lib/x86_64-linux-gnu/libstdc++.so* \
+                   /usr/lib/x86_64-linux-gnu/libnl-3.so* \
+                   /usr/lib/x86_64-linux-gnu/libnl-genl-3.so* \
+                   /usr/lib/x86_64-linux-gnu/libiw.so* \
+                   ; do
+            # Copy to both lib64 (for system linker) and usr/lib (for modern programs)
+            [ -f "$lib" ] && cp -L "$lib" distro/lib64/ 2>/dev/null || true
+            [ -f "$lib" ] && cp -L "$lib" distro/usr/lib/ 2>/dev/null || true 
         done
         
-        # Copy additional dependencies
-        cp -L /usr/lib/x86_64-linux-gnu/libffi*.so* distro/usr/lib/ 2>/dev/null || true
-        cp -L /usr/lib/x86_64-linux-gnu/libexpat*.so* distro/usr/lib/ 2>/dev/null || true
+        # Copy Mesa DRI hardware drivers
+        mkdir -p distro/usr/lib/dri
+        cp /usr/lib/x86_64-linux-gnu/dri/*_dri.so distro/usr/lib/dri/ 2>/dev/null || true
+
+        # Copy essential binaries
+        cp /usr/bin/lspci distro/usr/bin/ 2>/dev/null || true
+        cp /usr/bin/lsusb distro/usr/bin/ 2>/dev/null || true
+        cp /sbin/ip distro/sbin/ 2>/dev/null || true
+        cp /sbin/dhclient distro/sbin/ 2>/dev/null || true
+        cp /usr/sbin/wpa_supplicant distro/usr/sbin/ 2>/dev/null || true
+        
+        # Copy Font Utility and Content
+        cp /usr/bin/fc-cache distro/usr/bin/ 2>/dev/null || true
+        mkdir -p distro/usr/share/fonts/truetype/dejavu
+        cp -r /usr/share/fonts/truetype/dejavu/* distro/usr/share/fonts/truetype/dejavu/ 2>/dev/null || true
         
     - name: Setup init system
       run: |
@@ -369,22 +426,12 @@ jobs:
       if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true'
       uses: softprops/action-gh-release@v1
       with:
-        # Use the abbreviated Git SHA for the tag name
         tag_name: ${{ github.sha }}
-        # Use the full Git SHA in the release name for clarity
         name: alinux Build ${{ github.sha }}
         files: alinux.iso
         body: |
           ## alinux - Build ${{ github.sha }}
           
-          A minimal, high-performance Linux distribution powered by the Azul GUI system.
-
-          ```bash
-          # testing
-          qemu-system-x86_64 -m 2G -cdrom alinux.iso -enable-kvm
-          
-          # usb stick
-          sudo dd if=alinux.iso of=/dev/sdX bs=1M status=progress
-          ```
+          A minimal, high-performance Linux distribution with a "Batteries Included" foundation.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
