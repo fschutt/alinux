@@ -1,8 +1,8 @@
-name: Build ALinux ISO
+name: Build alinux ISO
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
   workflow_dispatch:
 
 env:
@@ -202,19 +202,19 @@ jobs:
         
         # Build introibo installer
         cd introibo
-        gcc -O3 -march=x86-64 -o ../programs-build/introibo main.c \
+        gcc -O3 -march=x86-64 -o ../programs-build/introibo master.c \
           $(pkg-config --cflags --libs wayland-client) -I../wayland-install/usr/include
         cd ..
         
         # Build alogin
         cd alogin
-        gcc -O3 -march=x86-64 -o ../programs-build/alogin main.c \
+        gcc -O3 -march=x86-64 -o ../programs-build/alogin master.c \
           $(pkg-config --cflags --libs wayland-client) -I../wayland-install/usr/include
         cd ..
         
         # Build acomp
         cd acomp
-        gcc -O3 -march=x86-64 -o ../programs-build/acomp main.c \
+        gcc -O3 -march=x86-64 -o ../programs-build/acomp master.c \
           $(pkg-config --cflags --libs wayland-server) -I../wayland-install/usr/include
         cd ..
         
@@ -349,7 +349,7 @@ jobs:
           -no-emul-boot \
           -boot-load-size 4 \
           -boot-info-table \
-          -J -R -V "ALinux" \
+          -J -R -V "alinux" \
           iso
           
     - name: Upload ISO
@@ -360,31 +360,22 @@ jobs:
         retention-days: 30
         
     - name: Create release
-      if: github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/master'
       uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ github.run_number }}
-        name: ALinux Build ${{ github.run_number }}
+        name: alinux Build ${{ github.run_number }}
         files: alinux.iso
         body: |
-          ## ALinux - Build ${{ github.run_number }}
+          ## alinux - Build ${{ github.run_number }}
           
           A minimal, high-performance Linux distribution powered by the Azul GUI system.
-          
-          ### Features
-          - Custom Azul GUI applications (introibo, alogin, acomp)
-          - libazul.so graphics library
-          - Optimized kernel with CachyOS patches
-          - Wayland-native compositor
-          - CLI-focused with powerful userland tools
-          
-          ### Testing
+
           ```bash
+          # testing
           qemu-system-x86_64 -m 2G -cdrom alinux.iso -enable-kvm
-          ```
           
-          ### Boot on hardware
-          ```bash
+          # usb stick
           sudo dd if=alinux.iso of=/dev/sdX bs=1M status=progress
           ```
       env:
