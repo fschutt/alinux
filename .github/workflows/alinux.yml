@@ -202,19 +202,19 @@ jobs:
         
         # Build introibo installer
         cd introibo
-        gcc -O3 -march=x86-64 -o ../programs-build/introibo master.c \
+        gcc -O3 -march=x86-64 -o ../programs-build/introibo main.c \
           $(pkg-config --cflags --libs wayland-client) -I../wayland-install/usr/include
         cd ..
         
         # Build alogin
         cd alogin
-        gcc -O3 -march=x86-64 -o ../programs-build/alogin master.c \
+        gcc -O3 -march=x86-64 -o ../programs-build/alogin main.c \
           $(pkg-config --cflags --libs wayland-client) -I../wayland-install/usr/include
         cd ..
         
         # Build acomp
         cd acomp
-        gcc -O3 -march=x86-64 -o ../programs-build/acomp master.c \
+        gcc -O3 -march=x86-64 -o ../programs-build/acomp main.c \
           $(pkg-config --cflags --libs wayland-server) -I../wayland-install/usr/include
         cd ..
         
