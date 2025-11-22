@@ -1,6 +1,8 @@
 name: Build ALinux ISO
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 env:
@@ -154,14 +156,38 @@ jobs:
     - name: Build seatd
       if: steps.seatd-cache.outputs.cache-hit != 'true'
       run: |
+        set -e
         mkdir -p seatd-install
         wget -q https://git.sr.ht/~kennylevinsen/seatd/archive/${SEATD_VERSION}.tar.gz -O seatd.tar.gz
         tar xf seatd.tar.gz
         cd seatd-${SEATD_VERSION}
         
-        meson setup build -Dprefix=/usr -Dbuiltin=enabled
-        ninja -C build
-        DESTDIR=../seatd-install ninja -C build install
+        # Check available meson options
+        echo "=== Available meson options ==="
+        meson configure 2>/dev/null || true
+        
+        # Build seatd (builtin option removed in newer versions)
+        if meson setup build -Dprefix=/usr 2>&1 | tee /tmp/meson-setup.log; then
+          echo "=== Meson setup successful ==="
+        else
+          echo "=== Meson setup failed, showing log ==="
+          cat build/meson-logs/meson-log.txt 2>/dev/null || cat /tmp/meson-setup.log
+          exit 1
+        fi
+        
+        if ninja -C build; then
+          echo "=== Ninja build successful ==="
+        else
+          echo "=== Ninja build failed ==="
+          exit 1
+        fi
+        
+        if DESTDIR=../seatd-install ninja -C build install; then
+          echo "=== Install successful ==="
+        else
+          echo "=== Install failed ==="
+          exit 1
+        fi
         
     - name: Build Azul programs
       run: |
