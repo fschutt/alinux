@@ -263,7 +263,7 @@ jobs:
         
         # Install BusyBox
         cd distro
-        cp ../artifacts/busybox bin/busybox
+        cp ../artifacts/busybox-build/busybox bin/busybox
         chmod +x bin/busybox
         
         # Create BusyBox symlinks
