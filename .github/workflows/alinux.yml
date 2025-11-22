@@ -1,9 +1,13 @@
 name: Build alinux ISO
 
 on:
-  push:
-    branches: [ master ]
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create release'
+        required: false
+        default: 'false'
+        type: boolean
 
 env:
   KERNEL_VERSION: "6.12.1"
@@ -357,17 +361,19 @@ jobs:
       with:
         name: alinux-iso
         path: alinux.iso
-        retention-days: 30
+        retention-days: 10
         
     - name: Create release
-      if: github.ref == 'refs/heads/master'
+      if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true'
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: v${{ github.run_number }}
-        name: alinux Build ${{ github.run_number }}
+        # Use the abbreviated Git SHA for the tag name
+        tag_name: ${{ github.sha }}
+        # Use the full Git SHA in the release name for clarity
+        name: alinux Build ${{ github.sha }}
         files: alinux.iso
         body: |
-          ## alinux - Build ${{ github.run_number }}
+          ## alinux - Build ${{ github.sha }}
           
           A minimal, high-performance Linux distribution powered by the Azul GUI system.
 
