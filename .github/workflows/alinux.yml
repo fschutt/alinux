@@ -1,8 +1,6 @@
 name: Build ALinux ISO
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 env:
@@ -108,6 +106,10 @@ jobs:
         
         make defconfig
         sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+        
+        # Disable tc (traffic control) - requires newer kernel headers
+        sed -i 's/CONFIG_TC=y/# CONFIG_TC is not set/' .config
+        
         make -j$(nproc)
         
         cp busybox ../busybox
