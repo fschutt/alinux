@@ -10,12 +10,12 @@ on:
         type: boolean
 
 env:
-  KERNEL_VERSION: "6.12.1"
-  BUSYBOX_VERSION: "1.36.1"
-  SEATD_VERSION: "0.8.0"
-  WLROOTS_VERSION: "0.18.2"
-  WAYLAND_VERSION: "1.23.0"
-  WAYLAND_PROTOCOLS_VERSION: "1.36"
+  KERNEL_VERSION: "6.17.8"
+  BUSYBOX_VERSION: "1.37.0"
+  SEATD_VERSION: "0.9.1"
+  WLROOTS_VERSION: "0.19.2"
+  WAYLAND_VERSION: "1.24.0"
+  WAYLAND_PROTOCOLS_VERSION: "1.45"
 
 jobs:
   build-kernel:
@@ -51,22 +51,20 @@ jobs:
         mkdir -p kernel-build
         cd kernel-build
         
+        # NOTE: Using the full version in the URL
         wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz
         tar xf linux-${KERNEL_VERSION}.tar.xz
         cd linux-${KERNEL_VERSION}
         
-        # Copy config from repo
         cp ../../config/kernel.config .config
         make olddefconfig
         
         echo "Starting kernel build..."
         make -j$(nproc) CFLAGS="-O3 -march=x86-64 -mtune=generic -pipe"
         
-        # Build and install kernel modules
         make modules -j$(nproc)
         make modules_install INSTALL_MOD_PATH=../modules_install
         
-        # Copy to cache directory
         cp arch/x86/boot/bzImage ../bzImage
         echo "${KERNEL_VERSION}" > ../version.txt
         
@@ -91,7 +89,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Install dependencies (Expanded for "Batteries Included")
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -105,7 +103,7 @@ jobs:
           libglib2.0-dev libxcb-randr0-dev libxcb-xfixes0-dev \
           libpci-dev libusb-1.0-0-dev \
           zlib1g-dev libbz2-dev liblzma-dev libzstd-dev \
-          libstdc++-dev \
+          libstdc++-14-dev \
           wpasupplicant libnl-3-dev libnl-genl-3-dev \
           iproute2 isc-dhcp-client \
           fonts-dejavu-core
@@ -123,12 +121,15 @@ jobs:
         mkdir -p busybox-build
         cd busybox-build
         
+        # NOTE: Updated to latest version 1.37.0
         wget -q https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2
         tar xf busybox-${BUSYBOX_VERSION}.tar.bz2
         cd busybox-${BUSYBOX_VERSION}
         
         make defconfig
+        # Ensure static linking
         sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+        # Disable tc (traffic control) - requires newer kernel headers
         sed -i 's/CONFIG_TC=y/# CONFIG_TC is not set/' .config
         
         make -j$(nproc)
@@ -275,7 +276,7 @@ jobs:
         name: userspace-programs
         path: artifacts/
         
-    - name: Create root filesystem (Expanded)
+    - name: Create root filesystem
       run: |
         mkdir -p distro/{bin,sbin,lib,lib64,usr,etc,dev,proc,sys,run,tmp}
         mkdir -p distro/usr/{bin,sbin,lib,share}
@@ -335,11 +336,11 @@ jobs:
                    /usr/lib/x86_64-linux-gnu/libpci.so* \
                    /usr/lib/x86_64-linux-gnu/libusb-1.0.so* \
                    /usr/lib/x86_64-linux-gnu/libstdc++.so* \
+                   /usr/lib/x86_64-linux-gnu/libm.so* \
                    /usr/lib/x86_64-linux-gnu/libnl-3.so* \
                    /usr/lib/x86_64-linux-gnu/libnl-genl-3.so* \
                    /usr/lib/x86_64-linux-gnu/libiw.so* \
                    ; do
-            # Copy to both lib64 (for system linker) and usr/lib (for modern programs)
             [ -f "$lib" ] && cp -L "$lib" distro/lib64/ 2>/dev/null || true
             [ -f "$lib" ] && cp -L "$lib" distro/usr/lib/ 2>/dev/null || true 
         done
