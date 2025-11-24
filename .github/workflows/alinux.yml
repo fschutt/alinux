@@ -94,7 +94,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential pkg-config wget ninja-build meson \
-            python3-mako python3-pyyaml python3-ply \
+            python3-mako python3-yaml python3-ply \
             bison flex gettext autoconf automake libtool \
             libexpat1-dev libxml2-dev
             
