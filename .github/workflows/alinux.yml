@@ -143,9 +143,13 @@ jobs:
         path: wayland-install/
         key: wayland-${{ env.WAYLAND_VERSION }}-${{ env.WAYLAND_PROTOCOLS_VERSION }}
         
-    - name: Build Wayland libraries
+- name: Build Wayland libraries
       if: steps.wayland-cache.outputs.cache-hit != 'true'
       run: |
+        # Capture absolute root path to avoid relative path issues
+        export WORKSPACE_ROOT=$(pwd)
+        export WAYLAND_INSTALL="$WORKSPACE_ROOT/wayland-install"
+        
         mkdir -p wayland-build wayland-install
         cd wayland-build
         
@@ -155,20 +159,26 @@ jobs:
         cd wayland-${WAYLAND_VERSION}
         meson setup build -Dprefix=/usr -Ddocumentation=false
         ninja -C build
-        DESTDIR=../../wayland-install ninja -C build install
+        # Install to staging using absolute path
+        DESTDIR="$WAYLAND_INSTALL" ninja -C build install
         cd ..
         
-        # Setup env to use the newly built wayland for protocols build
-        export PATH="$PWD/../wayland-install/usr/bin:$PATH"
-        export PKG_CONFIG_PATH="$PWD/../wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:$PWD/../wayland-install/usr/share/pkgconfig"
-
+        # CRITICAL FIX: Patch pkg-config files to point to the staging directory.
+        # This ensures 'pkg-config --variable=wayland_scanner' returns the 1.24.0 binary
+        # we just built, not the system's 1.22.0 binary.
+        find "$WAYLAND_INSTALL" -name "*.pc" -exec sed -i "s|prefix=/usr|prefix=$WAYLAND_INSTALL/usr|g" {} +
+        
+        # Setup environment for the next build
+        export PATH="$WAYLAND_INSTALL/usr/bin:$PATH"
+        export PKG_CONFIG_PATH="$WAYLAND_INSTALL/usr/lib/x86_64-linux-gnu/pkgconfig:$WAYLAND_INSTALL/usr/share/pkgconfig"
+        
         # Wayland protocols
         wget -q https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/${WAYLAND_PROTOCOLS_VERSION}/downloads/wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}.tar.xz
         tar xf wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}.tar.xz
         cd wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}
         meson setup build -Dprefix=/usr
         ninja -C build
-        DESTDIR=../../wayland-install ninja -C build install
+        DESTDIR="$WAYLAND_INSTALL" ninja -C build install
         
     - name: Cache seatd build
       id: seatd-cache
