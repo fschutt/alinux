@@ -436,192 +436,213 @@ jobs:
         retention-days: 1
 
   build-iso:
-    needs: [build-kernel, build-userspace]
+    needs: [build-kernel, build-userspace, build-libraries]
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
+  
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Install ISO tools
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cpio genisoimage syslinux isolinux tree
+      - name: Checkout repository
+        uses: actions/checkout@v4
         
-    - name: Download kernel
-      uses: actions/download-artifact@v4
-      with:
-        name: kernel-bzImage
-        path: artifacts/
-        
-    - name: Download kernel modules
-      uses: actions/download-artifact@v4
-      with:
-        name: kernel-modules
-        path: artifacts/
-        
-    - name: Download userspace
-      uses: actions/download-artifact@v4
-      with:
-        name: userspace-programs
-        path: artifacts/
-        
-    - name: Create root filesystem
-      run: |
-        mkdir -p distro/{bin,sbin,lib,lib64,usr,etc,dev,proc,sys,run,tmp}
-        mkdir -p distro/usr/{bin,sbin,lib,share}
-        mkdir -p distro/etc/init.d
-        mkdir -p distro/run/user/0
-        
-        # Install BusyBox
-        cd distro
-        cp ../artifacts/busybox-build/busybox bin/busybox
-        chmod +x bin/busybox
-        for cmd in $(bin/busybox --list); do
-          ln -sf busybox bin/$cmd 2>/dev/null || true
-        done
-        cd ..
-        
-        # Install kernel modules
-        cp -r artifacts/lib/modules distro/lib/
-        
-        # Install Azul programs
-        cp artifacts/programs-build/introibo distro/usr/bin/
-        cp artifacts/programs-build/alogin distro/usr/bin/
-        cp artifacts/programs-build/acomp distro/usr/bin/
-        cp artifacts/programs-build/libazul.so distro/usr/lib/
-        chmod +x distro/usr/bin/*
-        
-        # Install Wayland/seatd libraries and binaries
-        cp -r artifacts/wayland-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
-        cp -r artifacts/wayland-install/usr/lib/* distro/usr/lib/ 2>/dev/null || cp -r artifacts/wayland-install/usr/lib/lib*.so* distro/usr/lib/ 2>/dev/null || true
-        cp -r artifacts/seatd-install/usr/* distro/usr/ 2>/dev/null || true
-        
-        # Copy system libraries (FULL EXPANDED LIST)
-        for lib in /lib/x86_64-linux-gnu/libc.so.6 \
-                   /lib/x86_64-linux-gnu/libm.so.6 \
-                   /lib/x86_64-linux-gnu/libpthread.so.0 \
-                   /lib/x86_64-linux-gnu/libdl.so.2 \
-                   /lib/x86_64-linux-gnu/librt.so.1 \
-                   /lib64/ld-linux-x86-64.so.2 \
-                   /usr/lib/x86_64-linux-gnu/libGL.so* \
-                   /usr/lib/x86_64-linux-gnu/libGLX.so* \
-                   /usr/lib/x86_64-linux-gnu/libEGL.so* \
-                   /usr/lib/x86_64-linux-gnu/libdrm.so* \
-                   /usr/lib/x86_64-linux-gnu/libgudev-1.0.so* \
-                   /usr/lib/x86_64-linux-gnu/libxkbcommon.so* \
-                   /usr/lib/x86_64-linux-gnu/libinput.so* \
-                   /usr/lib/x86_64-linux-gnu/libudev.so* \
-                   /usr/lib/x86_64-linux-gnu/libexpat.so* \
-                   /usr/lib/x86_64-linux-gnu/libfreetype.so* \
-                   /usr/lib/x86_64-linux-gnu/libfontconfig.so* \
-                   /usr/lib/x86_64-linux-gnu/libharfbuzz.so* \
-                   /usr/lib/x86_64-linux-gnu/libz.so* \
-                   /usr/lib/x86_64-linux-gnu/libbz2.so* \
-                   /usr/lib/x86_64-linux-gnu/liblzma.so* \
-                   /usr/lib/x86_64-linux-gnu/libzstd.so* \
-                   /usr/lib/x86_64-linux-gnu/libglib-2.0.so* \
-                   /usr/lib/x86_64-linux-gnu/libgobject-2.0.so* \
-                   /usr/lib/x86_64-linux-gnu/libffi.so* \
-                   /usr/lib/x86_64-linux-gnu/libpci.so* \
-                   /usr/lib/x86_64-linux-gnu/libusb-1.0.so* \
-                   /usr/lib/x86_64-linux-gnu/libstdc++.so* \
-                   /usr/lib/x86_64-linux-gnu/libm.so* \
-                   /usr/lib/x86_64-linux-gnu/libnl-3.so* \
-                   /usr/lib/x86_64-linux-gnu/libnl-genl-3.so* \
-                   /usr/lib/x86_64-linux-gnu/libiw.so* \
-                   ; do
-            [ -f "$lib" ] && cp -L "$lib" distro/lib64/ 2>/dev/null || true
-            [ -f "$lib" ] && cp -L "$lib" distro/usr/lib/ 2>/dev/null || true 
-        done
-        
-        # Copy Mesa DRI hardware drivers
-        mkdir -p distro/usr/lib/dri
-        cp /usr/lib/x86_64-linux-gnu/dri/*_dri.so distro/usr/lib/dri/ 2>/dev/null || true
+      - name: Install ISO tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cpio genisoimage syslinux isolinux tree
+          
+      - name: Download kernel
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel-bzImage
+          path: artifacts/
+          
+      - name: Download kernel modules
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel-modules
+          path: artifacts/
+          
+      - name: Download userspace
+        uses: actions/download-artifact@v4
+        with:
+          name: userspace-programs
+          path: artifacts/
+          
+      - name: Download system libraries
+        uses: actions/download-artifact@v4
+        with:
+          name: system-libraries
+          path: artifacts/
+          
+      - name: Create root filesystem
+        run: |
+          mkdir -p distro/{bin,sbin,lib,lib64,usr,etc,dev,proc,sys,run,tmp}
+          mkdir -p distro/usr/{bin,sbin,lib,share}
+          mkdir -p distro/etc/init.d
+          mkdir -p distro/run/user/0
+          
+          # Install BusyBox
+          cd distro
+          cp ../artifacts/busybox-build/busybox bin/busybox
+          chmod +x bin/busybox
+          for cmd in $(bin/busybox --list); do
+            ln -sf busybox bin/$cmd 2>/dev/null || true
+          done
+          cd ..
+          
+          # Install kernel modules
+          cp -r artifacts/modules_install/lib/modules distro/lib/
+          
+          # Install Azul programs
+          cp artifacts/programs-build/introibo distro/usr/bin/
+          cp artifacts/programs-build/alogin distro/usr/bin/
+          cp artifacts/programs-build/acomp distro/usr/bin/
+          cp artifacts/programs-build/libazul.so distro/usr/lib/
+          chmod +x distro/usr/bin/*
 
-        # Copy essential binaries
-        cp /usr/bin/lspci distro/usr/bin/ 2>/dev/null || true
-        cp /usr/bin/lsusb distro/usr/bin/ 2>/dev/null || true
-        cp /sbin/ip distro/sbin/ 2>/dev/null || true
-        cp /sbin/dhclient distro/sbin/ 2>/dev/null || true
-        cp /usr/sbin/wpa_supplicant distro/usr/sbin/ 2>/dev/null || true
-        
-        # Copy Font Utility and Content
-        cp /usr/bin/fc-cache distro/usr/bin/ 2>/dev/null || true
-        mkdir -p distro/usr/share/fonts/truetype/dejavu
-        cp -r /usr/share/fonts/truetype/dejavu/* distro/usr/share/fonts/truetype/dejavu/ 2>/dev/null || true
-        
-    - name: Setup init system
-      run: |
-        cd distro
-        
-        # Create device nodes
-        sudo mknod -m 666 dev/null c 1 3
-        sudo mknod -m 666 dev/zero c 1 5
-        sudo mknod -m 666 dev/random c 1 8
-        sudo mknod -m 666 dev/urandom c 1 9
-        sudo mknod -m 666 dev/tty c 5 0
-        sudo mknod -m 666 dev/console c 5 1
-        
-        # Copy init script from repo
-        cp ../config/init init
-        chmod +x init
-        
-        # Copy config files
-        cp ../config/fstab etc/fstab
-        cp ../config/hostname etc/hostname
-        cp ../config/passwd etc/passwd
-        cp ../config/group etc/group
-        
-    - name: Create initramfs
-      run: |
-        cd distro
-        find . | cpio -H newc -o | gzip > ../initramfs.img
-        
-    - name: Build ISO
-      run: |
-        mkdir -p iso/boot/{isolinux,kernel}
-        
-        # Copy kernel
-        cp artifacts/bzImage iso/boot/kernel/vmlinuz
-        cp initramfs.img iso/boot/kernel/
-        
-        # Copy bootloader
-        cp /usr/lib/ISOLINUX/isolinux.bin iso/boot/isolinux/
-        cp /usr/lib/syslinux/modules/bios/ldlinux.c32 iso/boot/isolinux/
-        
-        # Copy isolinux config from repo
-        cp config/isolinux.cfg iso/boot/isolinux/
-        
-        # Create ISO
-        genisoimage -o alinux.iso \
-          -b boot/isolinux/isolinux.bin \
-          -c boot/isolinux/boot.cat \
-          -no-emul-boot \
-          -boot-load-size 4 \
-          -boot-info-table \
-          -J -R -V "alinux" \
-          iso
+          # Install Wayland/seatd libraries (from userspace build)
+          cp -r artifacts/wayland-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
+          cp -r artifacts/wayland-install/usr/lib/* distro/usr/lib/ 2>/dev/null || cp -r artifacts/wayland-install/usr/lib/lib*.so* distro/usr/lib/ 2>/dev/null || true
+          cp -r artifacts/seatd-install/usr/* distro/usr/ 2>/dev/null || true
+
+          # Install custom-built system libraries
+          echo "Installing musl libc..."
+          cp -r artifacts/musl-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
+          cp artifacts/musl-install/usr/lib/libc.so distro/lib64/ld-musl-x86_64.so.1 2>/dev/null || true
+
+          echo "Installing libdrm..."
+          cp -r artifacts/libdrm-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
+          cp -r artifacts/libdrm-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
+
+          echo "Installing Mesa..."
+          cp -r artifacts/mesa-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
+          cp -r artifacts/mesa-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
+
+          # Install Mesa DRI drivers
+          mkdir -p distro/usr/lib/dri
+          cp artifacts/mesa-install/usr/lib/x86_64-linux-gnu/dri/*_dri.so distro/usr/lib/dri/ 2>/dev/null || \
+            cp artifacts/mesa-install/usr/lib/dri/*_dri.so distro/usr/lib/dri/ 2>/dev/null || true
+
+          echo "Installing libxkbcommon..."
+          cp -r artifacts/libxkbcommon-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
+          cp -r artifacts/libxkbcommon-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
           
-    - name: Upload ISO
-      uses: actions/upload-artifact@v4
-      with:
-        name: alinux-iso
-        path: alinux.iso
-        retention-days: 10
-        
-    - name: Create release
-      if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true'
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ github.sha }}
-        name: alinux Build ${{ github.sha }}
-        files: alinux.iso
-        body: |
-          ## alinux - Build ${{ github.sha }}
+          echo "Installing libinput..."
+          cp -r artifacts/libinput-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
+          cp -r artifacts/libinput-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
           
-          A minimal, high-performance Linux distribution with a "Batteries Included" foundation.
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Still need some essential libraries from the runner that we haven't built
+          # (These are hard dependencies of the build system itself)
+          echo "Installing essential system libraries from runner..."
+          for lib in /lib/x86_64-linux-gnu/libc.so.6 \
+                     /lib/x86_64-linux-gnu/libm.so.6 \
+                     /lib/x86_64-linux-gnu/libpthread.so.0 \
+                     /lib/x86_64-linux-gnu/libdl.so.2 \
+                     /lib/x86_64-linux-gnu/librt.so.1 \
+                     /lib64/ld-linux-x86-64.so.2 \
+                     /usr/lib/x86_64-linux-gnu/libexpat.so* \
+                     /usr/lib/x86_64-linux-gnu/libfreetype.so* \
+                     /usr/lib/x86_64-linux-gnu/libfontconfig.so* \
+                     /usr/lib/x86_64-linux-gnu/libharfbuzz.so* \
+                     /usr/lib/x86_64-linux-gnu/libz.so* \
+                     /usr/lib/x86_64-linux-gnu/libbz2.so* \
+                     /usr/lib/x86_64-linux-gnu/liblzma.so* \
+                     /usr/lib/x86_64-linux-gnu/libzstd.so* \
+                     /usr/lib/x86_64-linux-gnu/libglib-2.0.so* \
+                     /usr/lib/x86_64-linux-gnu/libgobject-2.0.so* \
+                     /usr/lib/x86_64-linux-gnu/libffi.so* \
+                     /usr/lib/x86_64-linux-gnu/libpci.so* \
+                     /usr/lib/x86_64-linux-gnu/libusb-1.0.so* \
+                     /usr/lib/x86_64-linux-gnu/libstdc++.so* \
+                     /usr/lib/x86_64-linux-gnu/libnl-3.so* \
+                     /usr/lib/x86_64-linux-gnu/libnl-genl-3.so* \
+                     /usr/lib/x86_64-linux-gnu/libiw.so* \
+                     ; do
+              [ -f "$lib" ] && cp -L "$lib" distro/lib64/ 2>/dev/null || true
+              [ -f "$lib" ] && cp -L "$lib" distro/usr/lib/ 2>/dev/null || true 
+          done
+          
+          # Copy essential binaries
+          cp /usr/bin/lspci distro/usr/bin/ 2>/dev/null || true
+          cp /usr/bin/lsusb distro/usr/bin/ 2>/dev/null || true
+          cp /sbin/ip distro/sbin/ 2>/dev/null || true
+          cp /sbin/dhclient distro/sbin/ 2>/dev/null || true
+          cp /usr/sbin/wpa_supplicant distro/usr/sbin/ 2>/dev/null || true
+
+          # Copy Font Utility and Content
+          cp /usr/bin/fc-cache distro/usr/bin/ 2>/dev/null || true
+          mkdir -p distro/usr/share/fonts/truetype/dejavu
+          cp -r /usr/share/fonts/truetype/dejavu/* distro/usr/share/fonts/truetype/dejavu/ 2>/dev/null || true
+
+      - name: Setup init system
+        run: |
+          cd distro
+          
+          # Create device nodes
+          sudo mknod -m 666 dev/null c 1 3
+          sudo mknod -m 666 dev/zero c 1 5
+          sudo mknod -m 666 dev/random c 1 8
+          sudo mknod -m 666 dev/urandom c 1 9
+          sudo mknod -m 666 dev/tty c 5 0
+          sudo mknod -m 666 dev/console c 5 1
+          
+          # Copy init script from repo
+          cp ../config/init init
+          chmod +x init
+          
+          # Copy config files
+          cp ../config/fstab etc/fstab
+          cp ../config/hostname etc/hostname
+          cp ../config/passwd etc/passwd
+          cp ../config/group etc/group
+          
+      - name: Create initramfs
+        run: |
+          cd distro
+          find . | cpio -H newc -o | gzip > ../initramfs.img
+          
+      - name: Build ISO
+        run: |
+          mkdir -p iso/boot/{isolinux,kernel}
+          
+          # Copy kernel
+          cp artifacts/bzImage iso/boot/kernel/vmlinuz
+          cp initramfs.img iso/boot/kernel/
+          
+          # Copy bootloader
+          cp /usr/lib/ISOLINUX/isolinux.bin iso/boot/isolinux/
+          cp /usr/lib/syslinux/modules/bios/ldlinux.c32 iso/boot/isolinux/
+          
+          # Copy isolinux config from repo
+          cp config/isolinux.cfg iso/boot/isolinux/
+          
+          # Create ISO
+          genisoimage -o alinux.iso \
+            -b boot/isolinux/isolinux.bin \
+            -c boot/isolinux/boot.cat \
+            -no-emul-boot \
+            -boot-load-size 4 \
+            -boot-info-table \
+            -J -R -V "alinux" \
+            iso
+            
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: alinux-iso
+          path: alinux.iso
+          retention-days: 10
+            
+      - name: Create release
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.sha }}
+          name: alinux Build ${{ github.sha }}
+          files: alinux.iso
+          body: |
+            ## alinux - Build ${{ github.sha }}
+            
+            A minimal, high-performance Linux distribution with a "Batteries Included" foundation.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
