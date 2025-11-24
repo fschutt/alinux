@@ -60,7 +60,7 @@ jobs:
         make olddefconfig
         
         echo "Starting kernel build..."
-        make -j$(nproc) CFLAGS="-O3 -march=x86-64 -mtune=generic -pipe"
+        make -j$(nproc)
         
         make modules -j$(nproc)
         make modules_install INSTALL_MOD_PATH=../modules_install
@@ -158,6 +158,10 @@ jobs:
         DESTDIR=../../wayland-install ninja -C build install
         cd ..
         
+        # Setup env to use the newly built wayland for protocols build
+        export PATH="$PWD/../wayland-install/usr/bin:$PATH"
+        export PKG_CONFIG_PATH="$PWD/../wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:$PWD/../wayland-install/usr/share/pkgconfig"
+
         # Wayland protocols
         wget -q https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/${WAYLAND_PROTOCOLS_VERSION}/downloads/wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}.tar.xz
         tar xf wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}.tar.xz
