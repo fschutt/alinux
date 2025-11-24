@@ -82,6 +82,184 @@ jobs:
         path: kernel-build/modules_install/
         retention-days: 1
 
+build-libraries:
+  runs-on: ubuntu-latest
+  
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential pkg-config wget ninja-build meson \
+          python3-mako python3-pyyaml python3-ply \
+          bison flex gettext autoconf automake libtool \
+          libexpat1-dev libxml2-dev
+          
+    # musl libc (1.2.5 - February 2024)
+    - name: Cache musl
+      id: musl-cache
+      uses: actions/cache@v3
+      with:
+        path: musl-install/
+        key: musl-1.2.5
+        
+    - name: Build musl libc
+      if: steps.musl-cache.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p musl-build musl-install
+        cd musl-build
+        
+        wget -q https://musl.libc.org/releases/musl-1.2.5.tar.gz
+        tar xf musl-1.2.5.tar.gz
+        cd musl-1.2.5
+        
+        ./configure --prefix=/usr \
+          --enable-optimize=size \
+          --enable-static \
+          --enable-shared
+        make -j$(nproc)
+        DESTDIR=../../musl-install make install
+        
+    # libdrm (2.4.128 - latest stable)
+    - name: Cache libdrm
+      id: libdrm-cache
+      uses: actions/cache@v3
+      with:
+        path: libdrm-install/
+        key: libdrm-2.4.128
+        
+    - name: Build libdrm
+      if: steps.libdrm-cache.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p libdrm-build libdrm-install
+        cd libdrm-build
+        
+        wget -q https://dri.freedesktop.org/libdrm/libdrm-2.4.128.tar.xz
+        tar xf libdrm-2.4.128.tar.xz
+        cd libdrm-2.4.128
+        
+        meson setup build \
+          --prefix=/usr \
+          --buildtype=release \
+          -Dintel=enabled \
+          -Dradeon=enabled \
+          -Damdgpu=enabled \
+          -Dnouveau=enabled \
+          -Dvmwgfx=enabled \
+          -Dvalgrind=disabled \
+          -Dtests=false
+        ninja -C build
+        DESTDIR=../../libdrm-install ninja -C build install
+        
+    # Mesa (24.3.4 - latest stable, use 25.0.x for cutting edge)
+    - name: Cache Mesa
+      id: mesa-cache
+      uses: actions/cache@v3
+      with:
+        path: mesa-install/
+        key: mesa-24.3.4
+        
+    - name: Build Mesa
+      if: steps.mesa-cache.outputs.cache-hit != 'true'
+      run: |
+        export PKG_CONFIG_PATH="${PWD}/libdrm-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}"
+        
+        mkdir -p mesa-build mesa-install
+        cd mesa-build
+        
+        wget -q https://mesa.freedesktop.org/archive/mesa-24.3.4.tar.xz
+        tar xf mesa-24.3.4.tar.xz
+        cd mesa-24.3.4
+        
+        meson setup build \
+          --prefix=/usr \
+          --buildtype=release \
+          -Dplatforms=wayland \
+          -Dgallium-drivers=radeonsi,iris,nouveau,virgl,svga,swrast \
+          -Dvulkan-drivers=amd,intel,intel_hasvk,nouveau,swrast \
+          -Ddri-drivers= \
+          -Dglx=disabled \
+          -Dgles1=disabled \
+          -Dgles2=enabled \
+          -Degl=enabled \
+          -Dgbm=enabled \
+          -Dllvm=enabled \
+          -Dshared-llvm=enabled \
+          -Dvalgrind=disabled \
+          -Dbuild-tests=false \
+          -Dvideo-codecs=all
+        ninja -C build
+        DESTDIR=../../mesa-install ninja -C build install
+        
+    # libxkbcommon (for keyboard handling)
+    - name: Cache libxkbcommon
+      id: libxkbcommon-cache
+      uses: actions/cache@v3
+      with:
+        path: libxkbcommon-install/
+        key: libxkbcommon-1.7.0
+        
+    - name: Build libxkbcommon
+      if: steps.libxkbcommon-cache.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p libxkbcommon-build libxkbcommon-install
+        cd libxkbcommon-build
+        
+        wget -q https://xkbcommon.org/download/libxkbcommon-1.7.0.tar.xz
+        tar xf libxkbcommon-1.7.0.tar.xz
+        cd libxkbcommon-1.7.0
+        
+        meson setup build \
+          --prefix=/usr \
+          --buildtype=release \
+          -Denable-docs=false \
+          -Denable-wayland=true \
+          -Denable-x11=false
+        ninja -C build
+        DESTDIR=../../libxkbcommon-install ninja -C build install
+        
+    # libinput (for input device handling)
+    - name: Cache libinput
+      id: libinput-cache
+      uses: actions/cache@v3
+      with:
+        path: libinput-install/
+        key: libinput-1.27.0
+        
+    - name: Build libinput
+      if: steps.libinput-cache.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p libinput-build libinput-install
+        cd libinput-build
+        
+        wget -q https://gitlab.freedesktop.org/libinput/libinput/-/archive/1.27.0/libinput-1.27.0.tar.gz
+        tar xf libinput-1.27.0.tar.gz
+        cd libinput-1.27.0
+        
+        meson setup build \
+          --prefix=/usr \
+          --buildtype=release \
+          -Ddocumentation=false \
+          -Dtests=false \
+          -Ddebug-gui=false
+        ninja -C build
+        DESTDIR=../../libinput-install ninja -C build install
+        
+    - name: Upload library artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: system-libraries
+        path: |
+          musl-install/
+          libdrm-install/
+          mesa-install/
+          libxkbcommon-install/
+          libinput-install/
+        retention-days: 1
+
   build-userspace:
     runs-on: ubuntu-latest
     
