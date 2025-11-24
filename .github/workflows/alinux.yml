@@ -10,641 +10,473 @@ on:
         type: boolean
 
 env:
-  KERNEL_VERSION: "6.17.8"
-  BUSYBOX_VERSION: "1.37.0"
-  SEATD_VERSION: "0.9.1"
+  KERNEL_VERSION: "6.12.1"
   WLROOTS_VERSION: "0.19.2"
-  WAYLAND_VERSION: "1.24.0"
-  WAYLAND_PROTOCOLS_VERSION: "1.45"
+  CAGE_VERSION: "0.2.1"
+  LABWC_VERSION: "0.8.2"
 
 jobs:
   build-kernel:
     runs-on: ubuntu-latest
-    outputs:
-      cache-hit: ${{ steps.kernel-cache.outputs.cache-hit }}
-    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential bc bison flex libelf-dev libssl-dev
+        
     - name: Cache kernel build
       id: kernel-cache
       uses: actions/cache@v3
       with:
-        path: |
-          kernel-build/bzImage
-          kernel-build/modules_install/
-          kernel-build/version.txt
-        key: kernel-${{ env.KERNEL_VERSION }}-${{ hashFiles('config/kernel.config') }}
+        path: kernel-build/
+        key: kernel-${{ env.KERNEL_VERSION }}-v2
         
-    - name: Install kernel build dependencies
-      if: steps.kernel-cache.outputs.cache-hit != 'true'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential bc bison flex libelf-dev \
-          libssl-dev libncurses-dev wget
-          
     - name: Build Linux kernel
       if: steps.kernel-cache.outputs.cache-hit != 'true'
       run: |
         mkdir -p kernel-build
-        cd kernel-build
-        
-        # NOTE: Using the full version in the URL
         wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${KERNEL_VERSION}.tar.xz
         tar xf linux-${KERNEL_VERSION}.tar.xz
         cd linux-${KERNEL_VERSION}
         
-        cp ../../config/kernel.config .config
-        make olddefconfig
+        make defconfig
+        
+        # Enable essential features
+        sed -i 's/# CONFIG_DEVTMPFS is not set/CONFIG_DEVTMPFS=y/' .config
+        sed -i 's/# CONFIG_DEVTMPFS_MOUNT is not set/CONFIG_DEVTMPFS_MOUNT=y/' .config
+        sed -i 's/# CONFIG_DRM is not set/CONFIG_DRM=y/' .config
         
         echo "Starting kernel build..."
-        make -j$(nproc)
+        make -j$(nproc) bzImage modules
         
-        make modules -j$(nproc)
-        make modules_install INSTALL_MOD_PATH=../modules_install
+        cp arch/x86/boot/bzImage ../kernel-build/
+        make modules_install INSTALL_MOD_PATH=../kernel-build/modules_install
         
-        cp arch/x86/boot/bzImage ../bzImage
-        echo "${KERNEL_VERSION}" > ../version.txt
-        
-    - name: Upload kernel artifact (bzImage)
+    - name: Upload kernel artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: kernel-bzImage
-        path: kernel-build/bzImage
-        retention-days: 1
-        
-    - name: Upload kernel modules artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: kernel-modules
-        path: kernel-build/modules_install/
+        name: kernel-artifacts
+        path: kernel-build/
         retention-days: 1
 
-  build-libraries:
+  build-compositors:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential pkg-config wget ninja-build meson \
-            python3-mako python3-yaml python3-ply \
-            bison flex gettext autoconf automake libtool \
-            libexpat1-dev libxml2-dev
+            build-essential pkg-config ninja-build meson \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libinput-dev libdrm-dev libgbm-dev libpixman-1-dev \
+            libseat-dev libudev-dev libgl1-mesa-dev libvulkan-dev \
+            libpci-dev libpng-dev libjpeg-dev libxml2-dev \
+            scdoc git hwdata
             
-      # libpciaccess (0.18 - latest, needed by libdrm)
-      - name: Cache libpciaccess
-        id: libpciaccess-cache
+      - name: Cache wlroots
+        id: wlroots-cache
         uses: actions/cache@v3
         with:
-          path: libpciaccess-install/
-          key: libpciaccess-0.18
+          path: wlroots-install/
+          key: wlroots-${{ env.WLROOTS_VERSION }}
           
-      - name: Build libpciaccess
-        if: steps.libpciaccess-cache.outputs.cache-hit != 'true'
+      - name: Build wlroots
+        if: steps.wlroots-cache.outputs.cache-hit != 'true'
         run: |
-          mkdir -p libpciaccess-build libpciaccess-install
-          cd libpciaccess-build
-          
-          wget -q https://xorg.freedesktop.org/archive/individual/lib/libpciaccess-0.18.tar.xz
-          tar xf libpciaccess-0.18.tar.xz
-          cd libpciaccess-0.18
+          mkdir -p wlroots-install
+          git clone --depth 1 --branch ${WLROOTS_VERSION} https://gitlab.freedesktop.org/wlroots/wlroots.git
+          cd wlroots
           
           meson setup build \
             --prefix=/usr \
             --buildtype=release \
-            -Dzlib=enabled
+            -Dexamples=false \
+            -Dxwayland=enabled
           ninja -C build
-          DESTDIR=../../libpciaccess-install ninja -C build install
-            
-      # musl libc (1.2.5 - February 2024)
-      - name: Cache musl
-        id: musl-cache
+          DESTDIR=../wlroots-install ninja -C build install
+          
+      - name: Cache cage
+        id: cage-cache
         uses: actions/cache@v3
         with:
-          path: musl-install/
-          key: musl-1.2.5
+          path: cage-install/
+          key: cage-${{ env.CAGE_VERSION }}-wlroots-${{ env.WLROOTS_VERSION }}
           
-      - name: Build musl libc
-        if: steps.musl-cache.outputs.cache-hit != 'true'
+      - name: Build cage
+        if: steps.cage-cache.outputs.cache-hit != 'true'
         run: |
-          mkdir -p musl-build musl-install
-          cd musl-build
+          export PKG_CONFIG_PATH="${PWD}/wlroots-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wlroots-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
           
-          wget -q https://musl.libc.org/releases/musl-1.2.5.tar.gz
-          tar xf musl-1.2.5.tar.gz
-          cd musl-1.2.5
-          
-          ./configure --prefix=/usr \
-            --enable-optimize=size \
-            --enable-static \
-            --enable-shared
-          make -j$(nproc)
-          DESTDIR=../../musl-install make install
-          
-      # libdrm (2.4.128 - latest stable)
-      - name: Cache libdrm
-        id: libdrm-cache
-        uses: actions/cache@v3
-        with:
-          path: libdrm-install/
-          key: libdrm-2.4.128
-          
-      - name: Build libdrm
-        if: steps.libdrm-cache.outputs.cache-hit != 'true'
-        run: |
-          export PKG_CONFIG_PATH="${PWD}/libpciaccess-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/libpciaccess-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
-          
-          mkdir -p libdrm-build libdrm-install
-          cd libdrm-build
-          
-          wget -q https://dri.freedesktop.org/libdrm/libdrm-2.4.128.tar.xz
-          tar xf libdrm-2.4.128.tar.xz
-          cd libdrm-2.4.128
+          mkdir -p cage-install
+          wget -q https://github.com/cage-kiosk/cage/releases/download/v${CAGE_VERSION}/cage-${CAGE_VERSION}.tar.gz
+          tar xf cage-${CAGE_VERSION}.tar.gz
+          cd cage-${CAGE_VERSION}
           
           meson setup build \
             --prefix=/usr \
             --buildtype=release \
-            -Dintel=enabled \
-            -Dradeon=enabled \
-            -Damdgpu=enabled \
-            -Dnouveau=enabled \
-            -Dvmwgfx=enabled \
-            -Dvalgrind=disabled \
-            -Dtests=false
+            -Dxwayland=enabled
           ninja -C build
-          DESTDIR=../../libdrm-install ninja -C build install
+          DESTDIR=../cage-install ninja -C build install
           
-      # Mesa (24.3.4 - latest stable)
-      - name: Cache Mesa
-        id: mesa-cache
+      - name: Cache labwc
+        id: labwc-cache
         uses: actions/cache@v3
         with:
-          path: mesa-install/
-          key: mesa-24.3.4
+          path: labwc-install/
+          key: labwc-${{ env.LABWC_VERSION }}-wlroots-${{ env.WLROOTS_VERSION }}
           
-      - name: Build Mesa
-        if: steps.mesa-cache.outputs.cache-hit != 'true'
+      - name: Build labwc
+        if: steps.labwc-cache.outputs.cache-hit != 'true'
         run: |
-          export PKG_CONFIG_PATH="${PWD}/libdrm-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/libdrm-install/usr/lib/pkgconfig:${PWD}/libpciaccess-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/libpciaccess-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
+          export PKG_CONFIG_PATH="${PWD}/wlroots-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wlroots-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
           
-          mkdir -p mesa-build mesa-install
-          cd mesa-build
-          
-          wget -q https://mesa.freedesktop.org/archive/mesa-24.3.4.tar.xz
-          tar xf mesa-24.3.4.tar.xz
-          cd mesa-24.3.4
+          mkdir -p labwc-install
+          wget -q https://github.com/labwc/labwc/archive/refs/tags/${LABWC_VERSION}.tar.gz -O labwc.tar.gz
+          tar xf labwc.tar.gz
+          cd labwc-${LABWC_VERSION}
           
           meson setup build \
             --prefix=/usr \
             --buildtype=release \
-            -Dplatforms=wayland \
-            -Dgallium-drivers=radeonsi,iris,nouveau,virgl,svga,swrast \
-            -Dvulkan-drivers=amd,intel,intel_hasvk,nouveau,swrast \
-            -Ddri-drivers= \
-            -Dglx=disabled \
-            -Dgles1=disabled \
-            -Dgles2=enabled \
-            -Degl=enabled \
-            -Dgbm=enabled \
-            -Dllvm=enabled \
-            -Dshared-llvm=enabled \
-            -Dvalgrind=disabled \
-            -Dbuild-tests=false \
-            -Dvideo-codecs=all
+            -Dxwayland=enabled
           ninja -C build
-          DESTDIR=../../mesa-install ninja -C build install
+          DESTDIR=../labwc-install ninja -C build install
           
-      # libxkbcommon (for keyboard handling)
-      - name: Cache libxkbcommon
-        id: libxkbcommon-cache
-        uses: actions/cache@v3
-        with:
-          path: libxkbcommon-install/
-          key: libxkbcommon-1.7.0
-          
-      - name: Build libxkbcommon
-        if: steps.libxkbcommon-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p libxkbcommon-build libxkbcommon-install
-          cd libxkbcommon-build
-          
-          wget -q https://xkbcommon.org/download/libxkbcommon-1.7.0.tar.xz
-          tar xf libxkbcommon-1.7.0.tar.xz
-          cd libxkbcommon-1.7.0
-          
-          meson setup build \
-            --prefix=/usr \
-            --buildtype=release \
-            -Denable-docs=false \
-            -Denable-wayland=true \
-            -Denable-x11=false
-          ninja -C build
-          DESTDIR=../../libxkbcommon-install ninja -C build install
-          
-      # libinput (for input device handling)
-      - name: Cache libinput
-        id: libinput-cache
-        uses: actions/cache@v3
-        with:
-          path: libinput-install/
-          key: libinput-1.27.0
-          
-      - name: Build libinput
-        if: steps.libinput-cache.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p libinput-build libinput-install
-          cd libinput-build
-          
-          wget -q https://gitlab.freedesktop.org/libinput/libinput/-/archive/1.27.0/libinput-1.27.0.tar.gz
-          tar xf libinput-1.27.0.tar.gz
-          cd libinput-1.27.0
-          
-          meson setup build \
-            --prefix=/usr \
-            --buildtype=release \
-            -Ddocumentation=false \
-            -Dtests=false \
-            -Ddebug-gui=false
-          ninja -C build
-          DESTDIR=../../libinput-install ninja -C build install
-          
-      - name: Upload library artifacts
+      - name: Upload compositor artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: system-libraries
+          name: compositor-artifacts
           path: |
-            musl-install/
-            libpciaccess-install/
-            libdrm-install/
-            mesa-install/
-            libxkbcommon-install/
-            libinput-install/
+            wlroots-install/
+            cage-install/
+            labwc-install/
           retention-days: 1
-  
-  build-userspace:
+
+  build-custom-software:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential pkg-config wget cpio \
-          ninja-build meson libwayland-dev \
-          wayland-protocols libxkbcommon-dev \
-          libinput-dev libdrm-dev libgbm-dev \
-          libpixman-1-dev libseat-dev libudev-dev \
-          libgl1-mesa-dev libvulkan-dev \
-          libfreetype6-dev libfontconfig1-dev libharfbuzz-dev \
-          libglib2.0-dev libxcb-randr0-dev libxcb-xfixes0-dev \
-          libpci-dev libusb-1.0-0-dev \
-          zlib1g-dev libbz2-dev liblzma-dev libzstd-dev \
-          libstdc++-14-dev \
-          wpasupplicant libnl-3-dev libnl-genl-3-dev \
-          iproute2 isc-dhcp-client \
-          fonts-dejavu-core
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install library headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libwayland-dev libseat-dev libxkbcommon-dev libinput-dev \
+            libdrm-dev libgbm-dev libgl1-mesa-dev libpci-dev libudev-dev
+            
+      - name: Build Azul programs
+        run: |
+          mkdir -p programs-build
           
-    - name: Cache BusyBox build
-      id: busybox-cache
-      uses: actions/cache@v3
-      with:
-        path: busybox-build/busybox
-        key: busybox-${{ env.BUSYBOX_VERSION }}
-        
-    - name: Build BusyBox
-      if: steps.busybox-cache.outputs.cache-hit != 'true'
-      run: |
-        mkdir -p busybox-build
-        cd busybox-build
-        
-        # NOTE: Updated to latest version 1.37.0
-        wget -q https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2
-        tar xf busybox-${BUSYBOX_VERSION}.tar.bz2
-        cd busybox-${BUSYBOX_VERSION}
-        
-        make defconfig
-        # Ensure static linking
-        sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
-        # Disable tc (traffic control) - requires newer kernel headers
-        sed -i 's/CONFIG_TC=y/# CONFIG_TC is not set/' .config
-        
-        make -j$(nproc)
-        
-        cp busybox ../busybox
-        
-    - name: Cache Wayland build
-      id: wayland-cache
-      uses: actions/cache@v3
-      with:
-        path: wayland-install/
-        key: wayland-${{ env.WAYLAND_VERSION }}-${{ env.WAYLAND_PROTOCOLS_VERSION }}
-        
-    - name: Build Wayland libraries
-      if: steps.wayland-cache.outputs.cache-hit != 'true'
-      run: |
-        # Capture absolute root path to avoid relative path issues
-        export WORKSPACE_ROOT=$(pwd)
-        export WAYLAND_INSTALL="$WORKSPACE_ROOT/wayland-install"
-        
-        mkdir -p wayland-build wayland-install
-        cd wayland-build
-        
-        # Wayland
-        wget -q https://gitlab.freedesktop.org/wayland/wayland/-/releases/${WAYLAND_VERSION}/downloads/wayland-${WAYLAND_VERSION}.tar.xz
-        tar xf wayland-${WAYLAND_VERSION}.tar.xz
-        cd wayland-${WAYLAND_VERSION}
-        meson setup build -Dprefix=/usr -Ddocumentation=false
-        ninja -C build
-        # Install to staging using absolute path
-        DESTDIR="$WAYLAND_INSTALL" ninja -C build install
-        cd ..
-        
-        # CRITICAL FIX: Patch pkg-config files to point to the staging directory.
-        # This ensures 'pkg-config --variable=wayland_scanner' returns the 1.24.0 binary
-        # we just built, not the system's 1.22.0 binary.
-        find "$WAYLAND_INSTALL" -name "*.pc" -exec sed -i "s|prefix=/usr|prefix=$WAYLAND_INSTALL/usr|g" {} +
-        
-        # Setup environment for the next build
-        export PATH="$WAYLAND_INSTALL/usr/bin:$PATH"
-        export PKG_CONFIG_PATH="$WAYLAND_INSTALL/usr/lib/x86_64-linux-gnu/pkgconfig:$WAYLAND_INSTALL/usr/share/pkgconfig"
-        
-        # Wayland protocols
-        wget -q https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/${WAYLAND_PROTOCOLS_VERSION}/downloads/wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}.tar.xz
-        tar xf wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}.tar.xz
-        cd wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}
-        meson setup build -Dprefix=/usr
-        ninja -C build
-        DESTDIR="$WAYLAND_INSTALL" ninja -C build install
-        
-    - name: Cache seatd build
-      id: seatd-cache
-      uses: actions/cache@v3
-      with:
-        path: seatd-install/
-        key: seatd-${{ env.SEATD_VERSION }}
-        
-    - name: Build seatd
-      if: steps.seatd-cache.outputs.cache-hit != 'true'
-      run: |
-        set -e
-        mkdir -p seatd-install
-        wget -q https://git.sr.ht/~kennylevinsen/seatd/archive/${SEATD_VERSION}.tar.gz -O seatd.tar.gz
-        tar xf seatd.tar.gz
-        cd seatd-${SEATD_VERSION}
-        
-        if meson setup build -Dprefix=/usr; then
-          echo "=== Meson setup successful ==="
-        else
-          echo "=== Meson setup failed ==="
-          exit 1
-        fi
-        
-        if ninja -C build; then
-          echo "=== Ninja build successful ==="
-        else
-          echo "=== Ninja build failed ==="
-          exit 1
-        fi
-        
-        if DESTDIR=../seatd-install ninja -C build install; then
-          echo "=== Install successful ==="
-        else
-          echo "=== Install failed ==="
-          exit 1
-        fi
-        
-    - name: Build Azul programs
-      run: |
-        export PKG_CONFIG_PATH="${PWD}/wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wayland-install/usr/lib/pkgconfig:${PWD}/wayland-install/usr/share/pkgconfig"
-        
-        mkdir -p programs-build
-        
-        # Build libazul.so
-        cd libazul
-        gcc -O3 -march=x86-64 -shared -fPIC -o ../programs-build/libazul.so azul.c
-        cd ..
-        
-        # Build introibo installer
-        cd introibo
-        gcc -O3 -march=x86-64 -o ../programs-build/introibo main.c \
-          $(pkg-config --cflags --libs wayland-client) -I../wayland-install/usr/include
-        cd ..
-        
-        # Build alogin
-        cd alogin
-        gcc -O3 -march=x86-64 -o ../programs-build/alogin main.c \
-          $(pkg-config --cflags --libs wayland-client) -I../wayland-install/usr/include
-        cd ..
-        
-        # Build acomp
-        cd acomp
-        gcc -O3 -march=x86-64 -o ../programs-build/acomp main.c \
-          $(pkg-config --cflags --libs wayland-server) -I../wayland-install/usr/include
-        cd ..
-        
-    - name: Upload userspace artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: userspace-programs
-        path: |
-          programs-build/
-          busybox-build/busybox
-          wayland-install/
-          seatd-install/
-        retention-days: 1
+          # Build libazul.so
+          cd libazul
+          gcc -O3 -march=x86-64 -shared -fPIC -o ../programs-build/libazul.so azul.c
+          cd ..
+          
+          # Build introibo installer
+          cd introibo
+          gcc -O3 -march=x86-64 -o ../programs-build/introibo main.c \
+            $(pkg-config --cflags --libs wayland-client)
+          cd ..
+          
+          # Build alogin
+          cd alogin
+          gcc -O3 -march=x86-64 -o ../programs-build/alogin main.c \
+            $(pkg-config --cflags --libs wayland-client)
+          cd ..
+          
+          # Build acomp (kept for compatibility, but won't be used)
+          cd acomp
+          gcc -O3 -march=x86-64 -o ../programs-build/acomp main.c \
+            $(pkg-config --cflags --libs wayland-server)
+          cd ..
+          
+      - name: Upload custom binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: azul-binaries
+          path: programs-build/
 
   build-iso:
-    needs: [build-kernel, build-userspace, build-libraries]
+    needs: [build-kernel, build-compositors, build-custom-software]
     runs-on: ubuntu-latest
     permissions:
       contents: write
   
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      
+      - name: Install ISO creation tools
+        run: sudo apt-get update && sudo apt-get install -y cpio genisoimage syslinux isolinux
         
-      - name: Install ISO tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cpio genisoimage syslinux isolinux tree
-          
       - name: Download kernel
         uses: actions/download-artifact@v4
         with:
-          name: kernel-bzImage
-          path: artifacts/
+          name: kernel-artifacts
+          path: artifacts/kernel
           
-      - name: Download kernel modules
+      - name: Download compositors
         uses: actions/download-artifact@v4
         with:
-          name: kernel-modules
-          path: artifacts/
+          name: compositor-artifacts
+          path: artifacts/compositors
           
-      - name: Download userspace
+      - name: Download custom binaries
         uses: actions/download-artifact@v4
         with:
-          name: userspace-programs
-          path: artifacts/
+          name: azul-binaries
+          path: artifacts/azul
           
-      - name: Download system libraries
-        uses: actions/download-artifact@v4
-        with:
-          name: system-libraries
-          path: artifacts/
-          
-      - name: Create root filesystem
+      - name: Create Root Filesystem
         run: |
-          mkdir -p distro/{bin,sbin,lib,lib64,usr,etc,dev,proc,sys,run,tmp}
-          mkdir -p distro/usr/{bin,sbin,lib,share}
-          mkdir -p distro/etc/init.d
-          mkdir -p distro/run/user/0
+          # 1. Create Directory Structure
+          mkdir -p distro/{bin,sbin,usr/bin,usr/sbin,usr/lib,lib64,etc,dev,proc,sys,tmp,run,root,home}
+          mkdir -p distro/lib/modules
+          mkdir -p distro/etc/xdg/labwc
           
-          # Install BusyBox
-          cd distro
-          cp ../artifacts/busybox-build/busybox bin/busybox
-          chmod +x bin/busybox
-          for cmd in $(bin/busybox --list); do
-            ln -sf busybox bin/$cmd 2>/dev/null || true
-          done
-          cd ..
+          # 2. Install Kernel Modules
+          cp -r artifacts/kernel/modules_install/lib/modules/* distro/lib/modules/
           
-          # Install kernel modules
-          cp -r artifacts/modules_install/lib/modules distro/lib/
-          
-          # Install Azul programs
-          cp artifacts/programs-build/introibo distro/usr/bin/
-          cp artifacts/programs-build/alogin distro/usr/bin/
-          cp artifacts/programs-build/acomp distro/usr/bin/
-          cp artifacts/programs-build/libazul.so distro/usr/lib/
+          # 3. Install Custom Software (Azul)
+          cp artifacts/azul/introibo distro/usr/bin/
+          cp artifacts/azul/alogin distro/usr/bin/
+          cp artifacts/azul/acomp distro/usr/bin/
+          cp artifacts/azul/libazul.so distro/usr/lib/
           chmod +x distro/usr/bin/*
-
-          # Install Wayland/seatd libraries (from userspace build)
-          cp -r artifacts/wayland-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
-          cp -r artifacts/wayland-install/usr/lib/* distro/usr/lib/ 2>/dev/null || cp -r artifacts/wayland-install/usr/lib/lib*.so* distro/usr/lib/ 2>/dev/null || true
-          cp -r artifacts/seatd-install/usr/* distro/usr/ 2>/dev/null || true
-
-          # Install custom-built system libraries
-          echo "Installing musl libc..."
-          cp -r artifacts/musl-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
-          cp artifacts/musl-install/usr/lib/libc.so distro/lib64/ld-musl-x86_64.so.1 2>/dev/null || true
-
-          echo "Installing libdrm..."
-          cp -r artifacts/libdrm-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
-          cp -r artifacts/libdrm-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
-
-          echo "Installing Mesa..."
-          cp -r artifacts/mesa-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
-          cp -r artifacts/mesa-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
-
-          # Install Mesa DRI drivers
-          mkdir -p distro/usr/lib/dri
-          cp artifacts/mesa-install/usr/lib/x86_64-linux-gnu/dri/*_dri.so distro/usr/lib/dri/ 2>/dev/null || \
-            cp artifacts/mesa-install/usr/lib/dri/*_dri.so distro/usr/lib/dri/ 2>/dev/null || true
-
-          echo "Installing libxkbcommon..."
-          cp -r artifacts/libxkbcommon-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
-          cp -r artifacts/libxkbcommon-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
           
-          echo "Installing libinput..."
-          cp -r artifacts/libinput-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
-          cp -r artifacts/libinput-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
+          # 4. Install Compositors
+          echo "Installing wlroots libraries..."
+          cp -r artifacts/compositors/wlroots-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
+          cp -r artifacts/compositors/wlroots-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
           
-          # Still need some essential libraries from the runner that we haven't built
-          # (These are hard dependencies of the build system itself)
-          echo "Installing essential system libraries from runner..."
-          for lib in /lib/x86_64-linux-gnu/libc.so.6 \
-                     /lib/x86_64-linux-gnu/libm.so.6 \
-                     /lib/x86_64-linux-gnu/libpthread.so.0 \
-                     /lib/x86_64-linux-gnu/libdl.so.2 \
-                     /lib/x86_64-linux-gnu/librt.so.1 \
-                     /lib64/ld-linux-x86-64.so.2 \
-                     /usr/lib/x86_64-linux-gnu/libexpat.so* \
-                     /usr/lib/x86_64-linux-gnu/libfreetype.so* \
-                     /usr/lib/x86_64-linux-gnu/libfontconfig.so* \
-                     /usr/lib/x86_64-linux-gnu/libharfbuzz.so* \
-                     /usr/lib/x86_64-linux-gnu/libz.so* \
-                     /usr/lib/x86_64-linux-gnu/libbz2.so* \
-                     /usr/lib/x86_64-linux-gnu/liblzma.so* \
-                     /usr/lib/x86_64-linux-gnu/libzstd.so* \
-                     /usr/lib/x86_64-linux-gnu/libglib-2.0.so* \
-                     /usr/lib/x86_64-linux-gnu/libgobject-2.0.so* \
-                     /usr/lib/x86_64-linux-gnu/libffi.so* \
-                     /usr/lib/x86_64-linux-gnu/libpci.so* \
-                     /usr/lib/x86_64-linux-gnu/libusb-1.0.so* \
-                     /usr/lib/x86_64-linux-gnu/libstdc++.so* \
-                     /usr/lib/x86_64-linux-gnu/libnl-3.so* \
-                     /usr/lib/x86_64-linux-gnu/libnl-genl-3.so* \
-                     /usr/lib/x86_64-linux-gnu/libiw.so* \
-                     ; do
-              [ -f "$lib" ] && cp -L "$lib" distro/lib64/ 2>/dev/null || true
-              [ -f "$lib" ] && cp -L "$lib" distro/usr/lib/ 2>/dev/null || true 
+          echo "Installing cage..."
+          cp artifacts/compositors/cage-install/usr/bin/cage distro/usr/bin/
+          chmod +x distro/usr/bin/cage
+          
+          echo "Installing labwc..."
+          cp artifacts/compositors/labwc-install/usr/bin/labwc distro/usr/bin/
+          chmod +x distro/usr/bin/labwc
+          
+          # 5. Copy Host Tools
+          TOOLS="bash ls cp mv rm mkdir rmdir cat grep sed awk cut head tail \
+                 ps mount umount dmesg chmod chown login id whoami kill sleep \
+                 tar gzip bzip2 xz env free df du find xargs uname dirname basename \
+                 mknod ln readlink touch echo test tr sort uniq wc less more \
+                 date hostname yes which file stat wget curl clear"
+          
+          echo "Copying host binaries..."
+          for tool in $TOOLS; do
+            src=$(which $tool 2>/dev/null || echo "")
+            if [ -n "$src" ]; then
+              cp "$src" distro/bin/
+            fi
           done
           
-          # Copy essential binaries
-          cp /usr/bin/lspci distro/usr/bin/ 2>/dev/null || true
-          cp /usr/bin/lsusb distro/usr/bin/ 2>/dev/null || true
-          cp /sbin/ip distro/sbin/ 2>/dev/null || true
-          cp /sbin/dhclient distro/sbin/ 2>/dev/null || true
-          cp /usr/sbin/wpa_supplicant distro/usr/sbin/ 2>/dev/null || true
+          # Copy sbin tools
+          SBIN_TOOLS="ip modprobe insmod lsmod depmod kmod"
+          for tool in $SBIN_TOOLS; do
+            src=$(which $tool 2>/dev/null || echo "")
+            if [ -n "$src" ]; then
+              cp "$src" distro/sbin/
+            fi
+          done
+          
+          # Create kmod symlinks
+          if [ -f distro/sbin/kmod ]; then
+             cd distro/sbin
+             ln -sf kmod modprobe
+             ln -sf kmod insmod
+             ln -sf kmod lsmod
+             ln -sf kmod depmod
+             cd ../..
+          fi
+          
+          # Symlink sh to bash
+          cd distro/bin
+          ln -sf bash sh
+          cd ../..
 
-          # Copy Font Utility and Content
-          cp /usr/bin/fc-cache distro/usr/bin/ 2>/dev/null || true
-          mkdir -p distro/usr/share/fonts/truetype/dejavu
-          cp -r /usr/share/fonts/truetype/dejavu/* distro/usr/share/fonts/truetype/dejavu/ 2>/dev/null || true
-
-      - name: Setup init system
-        run: |
-          cd distro
+          # 6. Library Harvester
+          echo "Resolving shared libraries..."
           
-          # Create device nodes
-          sudo mknod -m 666 dev/null c 1 3
-          sudo mknod -m 666 dev/zero c 1 5
-          sudo mknod -m 666 dev/random c 1 8
-          sudo mknod -m 666 dev/urandom c 1 9
-          sudo mknod -m 666 dev/tty c 5 0
-          sudo mknod -m 666 dev/console c 5 1
+          copy_lib() {
+            local libpath=$1
+            if [ -f "$libpath" ]; then
+               cp -u -L "$libpath" distro/usr/lib/ 2>/dev/null || true
+               cp -u -L "$libpath" distro/lib64/ 2>/dev/null || true
+            fi
+          }
           
-          # Copy init script from repo
-          cp ../config/init init
-          chmod +x init
+          find distro/bin distro/sbin distro/usr/bin -type f -executable 2>/dev/null | while read binary; do
+             ldd "$binary" 2>/dev/null | grep "=> /" | awk '{print $3}' | while read lib; do
+                [ -n "$lib" ] && copy_lib "$lib"
+             done
+             
+             ldd "$binary" 2>/dev/null | grep "/ld-linux" | awk '{print $1}' | while read loader; do
+                [ -f "$loader" ] && cp -u -L "$loader" distro/lib64/
+             done
+          done
           
-          # Copy config files
-          cp ../config/fstab etc/fstab
-          cp ../config/hostname etc/hostname
-          cp ../config/passwd etc/passwd
-          cp ../config/group etc/group
+          # Ensure dynamic loader exists
+          cp -u /lib64/ld-linux-x86-64.so.2 distro/lib64/ 2>/dev/null || true
           
-      - name: Create initramfs
+          # Copy Wayland/Graphics libraries explicitly
+          echo "Copying Wayland/Graphics libraries..."
+          for lib in /usr/lib/x86_64-linux-gnu/libwayland-*.so* \
+                     /usr/lib/x86_64-linux-gnu/libseat*.so* \
+                     /usr/lib/x86_64-linux-gnu/libxkbcommon*.so* \
+                     /usr/lib/x86_64-linux-gnu/libinput*.so* \
+                     /usr/lib/x86_64-linux-gnu/libdrm*.so* \
+                     /usr/lib/x86_64-linux-gnu/libudev*.so* \
+                     /usr/lib/x86_64-linux-gnu/libevdev*.so* \
+                     /usr/lib/x86_64-linux-gnu/libmtdev*.so* \
+                     /usr/lib/x86_64-linux-gnu/libffi*.so* \
+                     /usr/lib/x86_64-linux-gnu/libpixman*.so* \
+                     /usr/lib/x86_64-linux-gnu/libgbm*.so* \
+                     /usr/lib/x86_64-linux-gnu/libEGL*.so* \
+                     /usr/lib/x86_64-linux-gnu/libGL*.so* \
+                     /usr/lib/x86_64-linux-gnu/libpng*.so* \
+                     /usr/lib/x86_64-linux-gnu/libjpeg*.so* \
+                     /usr/lib/x86_64-linux-gnu/libxml2*.so*; do
+            [ -f "$lib" ] && cp -L "$lib" distro/usr/lib/ || true
+          done
+          
+          # Copy Mesa DRI drivers for hardware acceleration
+          mkdir -p distro/usr/lib/dri
+          cp /usr/lib/x86_64-linux-gnu/dri/*_dri.so distro/usr/lib/dri/ 2>/dev/null || true
+          
+          # 7. Create labwc default config
+          cat <<'EOF' > distro/etc/xdg/labwc/rc.xml
+          <?xml version="1.0"?>
+          <labwc_config>
+            <theme>
+              <name>default</name>
+            </theme>
+            <keyboard>
+              <keybind key="A-Tab">
+                <action name="NextWindow"/>
+              </keybind>
+              <keybind key="A-F4">
+                <action name="Close"/>
+              </keybind>
+            </keyboard>
+          </labwc_config>
+          EOF
+          
+          # 8. Setup Configuration & Init Scripts
+          cat <<'EOF' > distro/init
+          #!/bin/bash
+          export PATH=/bin:/usr/bin:/sbin:/usr/sbin
+          
+          # Mount essential filesystems
+          /bin/mount -t proc proc /proc
+          /bin/mount -t sysfs sysfs /sys
+          /bin/mount -t devtmpfs udev /dev
+          /bin/mkdir -p /dev/pts /dev/shm
+          /bin/mount -t devpts devpts /dev/pts
+          /bin/mount -t tmpfs tmpfs /dev/shm
+          
+          echo "=========================================="
+          echo "  Welcome to alinux"
+          echo "  Kernel: $(/bin/uname -r)"
+          echo "=========================================="
+          
+          # Set up runtime directory for Wayland
+          export XDG_RUNTIME_DIR=/run/user/0
+          /bin/mkdir -p $XDG_RUNTIME_DIR
+          /bin/chmod 700 $XDG_RUNTIME_DIR
+          
+          # Check for first boot (installer mode)
+          if [ ! -f /etc/.installed ]; then
+            echo ""
+            echo "First boot detected - launching installer in kiosk mode..."
+            /bin/sleep 2
+            
+            # Launch installer in cage (kiosk compositor)
+            if [ -x /usr/bin/cage ] && [ -x /usr/bin/introibo ]; then
+              /usr/bin/cage -- /usr/bin/introibo
+            else
+              echo "ERROR: Cage or introibo not found!"
+              /usr/bin/introibo 2>/dev/null || echo "Running without compositor"
+            fi
+            
+            # Mark as installed
+            /bin/touch /etc/.installed
+            echo ""
+            echo "Installation complete. System will now reboot..."
+            /bin/sleep 3
+            /sbin/reboot
+          fi
+          
+          # Normal boot - show login manager
+          echo ""
+          echo "Starting login manager..."
+          
+          if [ -x /usr/bin/cage ] && [ -x /usr/bin/alogin ]; then
+            # Run login manager in kiosk mode
+            /usr/bin/cage -- /usr/bin/alogin
+            
+            # After login, check if we should start the desktop
+            if [ -f /tmp/.start_desktop ]; then
+              echo "Starting desktop environment with labwc..."
+              /bin/rm /tmp/.start_desktop
+              
+              if [ -x /usr/bin/labwc ]; then
+                exec /usr/bin/labwc
+              else
+                echo "labwc not found, dropping to shell"
+                exec /bin/bash
+              fi
+            fi
+          else
+            echo "Cage or alogin not found, dropping to shell"
+            exec /bin/bash
+          fi
+          
+          # Fallback to shell
+          exec /bin/bash
+          EOF
+          chmod +x distro/init
+          
+      - name: Pack Initramfs
         run: |
           cd distro
           find . | cpio -H newc -o | gzip > ../initramfs.img
+          cd ..
           
-      - name: Build ISO
+      - name: Build ISO Image
         run: |
-          mkdir -p iso/boot/{isolinux,kernel}
+          mkdir -p iso/boot/isolinux iso/boot/kernel
           
-          # Copy kernel
-          cp artifacts/bzImage iso/boot/kernel/vmlinuz
+          # Copy Kernel & Initramfs
+          cp artifacts/kernel/bzImage iso/boot/kernel/vmlinuz
           cp initramfs.img iso/boot/kernel/
           
-          # Copy bootloader
+          # Copy Bootloader
           cp /usr/lib/ISOLINUX/isolinux.bin iso/boot/isolinux/
           cp /usr/lib/syslinux/modules/bios/ldlinux.c32 iso/boot/isolinux/
           
-          # Copy isolinux config from repo
-          cp config/isolinux.cfg iso/boot/isolinux/
+          # Configure Bootloader
+          cat > iso/boot/isolinux/isolinux.cfg <<EOF
+          default linux
+          prompt 0
+          timeout 50
           
-          # Create ISO
+          label linux
+            kernel /boot/kernel/vmlinuz
+            append initrd=/boot/kernel/initramfs.img init=/init quiet loglevel=3
+          EOF
+          
+          # Generate ISO
           genisoimage -o alinux.iso \
             -b boot/isolinux/isolinux.bin \
             -c boot/isolinux/boot.cat \
@@ -661,16 +493,26 @@ jobs:
           path: alinux.iso
           retention-days: 10
             
-      - name: Create release
+      - name: Create Release
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.sha }}
-          name: alinux Build ${{ github.sha }}
+          tag_name: v${{ github.run_number }}
+          name: alinux Build ${{ github.run_number }}
           files: alinux.iso
           body: |
-            ## alinux - Build ${{ github.sha }}
+            ## alinux - Build ${{ github.run_number }}
             
-            A minimal, high-performance Linux distribution with a "Batteries Included" foundation.
+            **Features:**
+            - Cage kiosk compositor for installer/login
+            - labwc window manager for desktop
+            - Custom Azul applications (introibo, alogin)
+            - Full GNU tools from Ubuntu 24.04
+            - Linux kernel ${{ env.KERNEL_VERSION }}
+            
+            **Boot sequence:**
+            1. First boot → Installer (introibo) in cage kiosk mode
+            2. After install → Login manager (alogin) in cage
+            3. After login → Desktop with labwc compositor
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
