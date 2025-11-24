@@ -143,7 +143,7 @@ jobs:
         path: wayland-install/
         key: wayland-${{ env.WAYLAND_VERSION }}-${{ env.WAYLAND_PROTOCOLS_VERSION }}
         
-- name: Build Wayland libraries
+    - name: Build Wayland libraries
       if: steps.wayland-cache.outputs.cache-hit != 'true'
       run: |
         # Capture absolute root path to avoid relative path issues
