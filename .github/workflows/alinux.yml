@@ -307,7 +307,7 @@ jobs:
         cd ..
         
         # Install kernel modules
-        cp -r artifacts/modules_install/lib/modules distro/lib/
+        cp -r artifacts/lib/modules distro/lib/
         
         # Install Azul programs
         cp artifacts/programs-build/introibo distro/usr/bin/
