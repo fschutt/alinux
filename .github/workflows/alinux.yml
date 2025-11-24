@@ -11,6 +11,8 @@ on:
 
 env:
   KERNEL_VERSION: "6.12.1"
+  WAYLAND_VERSION: "1.23.1"
+  WAYLAND_PROTOCOLS_VERSION: "1.38"
   WLROOTS_VERSION: "0.19.2"
   CAGE_VERSION: "0.2.1"
   LABWC_VERSION: "0.8.2"
@@ -44,7 +46,6 @@ jobs:
         
         make defconfig
         
-        # Enable essential features
         sed -i 's/# CONFIG_DEVTMPFS is not set/CONFIG_DEVTMPFS=y/' .config
         sed -i 's/# CONFIG_DEVTMPFS_MOUNT is not set/CONFIG_DEVTMPFS_MOUNT=y/' .config
         sed -i 's/# CONFIG_DRM is not set/CONFIG_DRM=y/' .config
@@ -73,22 +74,70 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential pkg-config ninja-build meson \
-            libwayland-dev wayland-protocols libxkbcommon-dev \
-            libinput-dev libdrm-dev libgbm-dev libpixman-1-dev \
-            libseat-dev libudev-dev libgl1-mesa-dev libvulkan-dev \
-            libpci-dev libpng-dev libjpeg-dev libxml2-dev \
-            scdoc git hwdata
+            libxkbcommon-dev libinput-dev libdrm-dev libgbm-dev \
+            libpixman-1-dev libseat-dev libudev-dev libgl1-mesa-dev \
+            libvulkan-dev libpci-dev libpng-dev libjpeg-dev libxml2-dev \
+            libexpat1-dev libffi-dev scdoc git hwdata doxygen \
+            libgtest-dev libgmock-dev graphviz xmlto
             
+      - name: Cache wayland
+        id: wayland-cache
+        uses: actions/cache@v3
+        with:
+          path: wayland-install/
+          key: wayland-${{ env.WAYLAND_VERSION }}
+          
+      - name: Build wayland
+        if: steps.wayland-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p wayland-install
+          wget -q https://gitlab.freedesktop.org/wayland/wayland/-/releases/${WAYLAND_VERSION}/downloads/wayland-${WAYLAND_VERSION}.tar.xz
+          tar xf wayland-${WAYLAND_VERSION}.tar.xz
+          cd wayland-${WAYLAND_VERSION}
+          
+          meson setup build \
+            --prefix=/usr \
+            --buildtype=release \
+            -Ddocumentation=false \
+            -Dtests=false
+          ninja -C build
+          DESTDIR=../wayland-install ninja -C build install
+          
+      - name: Cache wayland-protocols
+        id: wayland-protocols-cache
+        uses: actions/cache@v3
+        with:
+          path: wayland-protocols-install/
+          key: wayland-protocols-${{ env.WAYLAND_PROTOCOLS_VERSION }}
+          
+      - name: Build wayland-protocols
+        if: steps.wayland-protocols-cache.outputs.cache-hit != 'true'
+        run: |
+          export PKG_CONFIG_PATH="${PWD}/wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wayland-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
+          
+          mkdir -p wayland-protocols-install
+          wget -q https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/${WAYLAND_PROTOCOLS_VERSION}/downloads/wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}.tar.xz
+          tar xf wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}.tar.xz
+          cd wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}
+          
+          meson setup build \
+            --prefix=/usr \
+            --buildtype=release
+          ninja -C build
+          DESTDIR=../wayland-protocols-install ninja -C build install
+          
       - name: Cache wlroots
         id: wlroots-cache
         uses: actions/cache@v3
         with:
           path: wlroots-install/
-          key: wlroots-${{ env.WLROOTS_VERSION }}
+          key: wlroots-${{ env.WLROOTS_VERSION }}-wayland-${{ env.WAYLAND_VERSION }}
           
       - name: Build wlroots
         if: steps.wlroots-cache.outputs.cache-hit != 'true'
         run: |
+          export PKG_CONFIG_PATH="${PWD}/wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wayland-install/usr/lib/pkgconfig:${PWD}/wayland-protocols-install/usr/share/pkgconfig:${PKG_CONFIG_PATH}"
+          
           mkdir -p wlroots-install
           git clone --depth 1 --branch ${WLROOTS_VERSION} https://gitlab.freedesktop.org/wlroots/wlroots.git
           cd wlroots
@@ -106,12 +155,12 @@ jobs:
         uses: actions/cache@v3
         with:
           path: cage-install/
-          key: cage-${{ env.CAGE_VERSION }}-wlroots-${{ env.WLROOTS_VERSION }}
+          key: cage-${{ env.CAGE_VERSION }}-wlroots-${{ env.WLROOTS_VERSION }}-wayland-${{ env.WAYLAND_VERSION }}
           
       - name: Build cage
         if: steps.cage-cache.outputs.cache-hit != 'true'
         run: |
-          export PKG_CONFIG_PATH="${PWD}/wlroots-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wlroots-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
+          export PKG_CONFIG_PATH="${PWD}/wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wayland-install/usr/lib/pkgconfig:${PWD}/wayland-protocols-install/usr/share/pkgconfig:${PWD}/wlroots-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wlroots-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
           
           mkdir -p cage-install
           wget -q https://github.com/cage-kiosk/cage/releases/download/v${CAGE_VERSION}/cage-${CAGE_VERSION}.tar.gz
@@ -130,12 +179,12 @@ jobs:
         uses: actions/cache@v3
         with:
           path: labwc-install/
-          key: labwc-${{ env.LABWC_VERSION }}-wlroots-${{ env.WLROOTS_VERSION }}
+          key: labwc-${{ env.LABWC_VERSION }}-wlroots-${{ env.WLROOTS_VERSION }}-wayland-${{ env.WAYLAND_VERSION }}
           
       - name: Build labwc
         if: steps.labwc-cache.outputs.cache-hit != 'true'
         run: |
-          export PKG_CONFIG_PATH="${PWD}/wlroots-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wlroots-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
+          export PKG_CONFIG_PATH="${PWD}/wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wayland-install/usr/lib/pkgconfig:${PWD}/wayland-protocols-install/usr/share/pkgconfig:${PWD}/wlroots-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wlroots-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
           
           mkdir -p labwc-install
           wget -q https://github.com/labwc/labwc/archive/refs/tags/${LABWC_VERSION}.tar.gz -O labwc.tar.gz
@@ -154,6 +203,8 @@ jobs:
         with:
           name: compositor-artifacts
           path: |
+            wayland-install/
+            wayland-protocols-install/
             wlroots-install/
             cage-install/
             labwc-install/
@@ -177,24 +228,20 @@ jobs:
         run: |
           mkdir -p programs-build
           
-          # Build libazul.so
           cd libazul
           gcc -O3 -march=x86-64 -shared -fPIC -o ../programs-build/libazul.so azul.c
           cd ..
           
-          # Build introibo installer
           cd introibo
           gcc -O3 -march=x86-64 -o ../programs-build/introibo main.c \
             $(pkg-config --cflags --libs wayland-client)
           cd ..
           
-          # Build alogin
           cd alogin
           gcc -O3 -march=x86-64 -o ../programs-build/alogin main.c \
             $(pkg-config --cflags --libs wayland-client)
           cd ..
           
-          # Build acomp (kept for compatibility, but won't be used)
           cd acomp
           gcc -O3 -march=x86-64 -o ../programs-build/acomp main.c \
             $(pkg-config --cflags --libs wayland-server)
@@ -238,22 +285,23 @@ jobs:
           
       - name: Create Root Filesystem
         run: |
-          # 1. Create Directory Structure
           mkdir -p distro/{bin,sbin,usr/bin,usr/sbin,usr/lib,lib64,etc,dev,proc,sys,tmp,run,root,home}
           mkdir -p distro/lib/modules
           mkdir -p distro/etc/xdg/labwc
           
-          # 2. Install Kernel Modules
           cp -r artifacts/kernel/modules_install/lib/modules/* distro/lib/modules/
           
-          # 3. Install Custom Software (Azul)
           cp artifacts/azul/introibo distro/usr/bin/
           cp artifacts/azul/alogin distro/usr/bin/
           cp artifacts/azul/acomp distro/usr/bin/
           cp artifacts/azul/libazul.so distro/usr/lib/
           chmod +x distro/usr/bin/*
           
-          # 4. Install Compositors
+          echo "Installing wayland libraries..."
+          cp -r artifacts/compositors/wayland-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
+          cp -r artifacts/compositors/wayland-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
+          cp -r artifacts/compositors/wayland-install/usr/bin/* distro/usr/bin/ 2>/dev/null || true
+          
           echo "Installing wlroots libraries..."
           cp -r artifacts/compositors/wlroots-install/usr/lib/x86_64-linux-gnu/* distro/usr/lib/ 2>/dev/null || true
           cp -r artifacts/compositors/wlroots-install/usr/lib/* distro/usr/lib/ 2>/dev/null || true
@@ -266,7 +314,6 @@ jobs:
           cp artifacts/compositors/labwc-install/usr/bin/labwc distro/usr/bin/
           chmod +x distro/usr/bin/labwc
           
-          # 5. Copy Host Tools
           TOOLS="bash ls cp mv rm mkdir rmdir cat grep sed awk cut head tail \
                  ps mount umount dmesg chmod chown login id whoami kill sleep \
                  tar gzip bzip2 xz env free df du find xargs uname dirname basename \
@@ -281,7 +328,6 @@ jobs:
             fi
           done
           
-          # Copy sbin tools
           SBIN_TOOLS="ip modprobe insmod lsmod depmod kmod"
           for tool in $SBIN_TOOLS; do
             src=$(which $tool 2>/dev/null || echo "")
@@ -290,7 +336,6 @@ jobs:
             fi
           done
           
-          # Create kmod symlinks
           if [ -f distro/sbin/kmod ]; then
              cd distro/sbin
              ln -sf kmod modprobe
@@ -300,12 +345,10 @@ jobs:
              cd ../..
           fi
           
-          # Symlink sh to bash
           cd distro/bin
           ln -sf bash sh
           cd ../..
 
-          # 6. Library Harvester
           echo "Resolving shared libraries..."
           
           copy_lib() {
@@ -326,10 +369,8 @@ jobs:
              done
           done
           
-          # Ensure dynamic loader exists
           cp -u /lib64/ld-linux-x86-64.so.2 distro/lib64/ 2>/dev/null || true
           
-          # Copy Wayland/Graphics libraries explicitly
           echo "Copying Wayland/Graphics libraries..."
           for lib in /usr/lib/x86_64-linux-gnu/libwayland-*.so* \
                      /usr/lib/x86_64-linux-gnu/libseat*.so* \
@@ -350,11 +391,9 @@ jobs:
             [ -f "$lib" ] && cp -L "$lib" distro/usr/lib/ || true
           done
           
-          # Copy Mesa DRI drivers for hardware acceleration
           mkdir -p distro/usr/lib/dri
           cp /usr/lib/x86_64-linux-gnu/dri/*_dri.so distro/usr/lib/dri/ 2>/dev/null || true
           
-          # 7. Create labwc default config
           cat <<'EOF' > distro/etc/xdg/labwc/rc.xml
           <?xml version="1.0"?>
           <labwc_config>
@@ -372,12 +411,10 @@ jobs:
           </labwc_config>
           EOF
           
-          # 8. Setup Configuration & Init Scripts
           cat <<'EOF' > distro/init
           #!/bin/bash
           export PATH=/bin:/usr/bin:/sbin:/usr/sbin
           
-          # Mount essential filesystems
           /bin/mount -t proc proc /proc
           /bin/mount -t sysfs sysfs /sys
           /bin/mount -t devtmpfs udev /dev
@@ -390,18 +427,15 @@ jobs:
           echo "  Kernel: $(/bin/uname -r)"
           echo "=========================================="
           
-          # Set up runtime directory for Wayland
           export XDG_RUNTIME_DIR=/run/user/0
           /bin/mkdir -p $XDG_RUNTIME_DIR
           /bin/chmod 700 $XDG_RUNTIME_DIR
           
-          # Check for first boot (installer mode)
           if [ ! -f /etc/.installed ]; then
             echo ""
             echo "First boot detected - launching installer in kiosk mode..."
             /bin/sleep 2
             
-            # Launch installer in cage (kiosk compositor)
             if [ -x /usr/bin/cage ] && [ -x /usr/bin/introibo ]; then
               /usr/bin/cage -- /usr/bin/introibo
             else
@@ -409,7 +443,6 @@ jobs:
               /usr/bin/introibo 2>/dev/null || echo "Running without compositor"
             fi
             
-            # Mark as installed
             /bin/touch /etc/.installed
             echo ""
             echo "Installation complete. System will now reboot..."
@@ -417,15 +450,12 @@ jobs:
             /sbin/reboot
           fi
           
-          # Normal boot - show login manager
           echo ""
           echo "Starting login manager..."
           
           if [ -x /usr/bin/cage ] && [ -x /usr/bin/alogin ]; then
-            # Run login manager in kiosk mode
             /usr/bin/cage -- /usr/bin/alogin
             
-            # After login, check if we should start the desktop
             if [ -f /tmp/.start_desktop ]; then
               echo "Starting desktop environment with labwc..."
               /bin/rm /tmp/.start_desktop
@@ -442,7 +472,6 @@ jobs:
             exec /bin/bash
           fi
           
-          # Fallback to shell
           exec /bin/bash
           EOF
           chmod +x distro/init
@@ -457,15 +486,12 @@ jobs:
         run: |
           mkdir -p iso/boot/isolinux iso/boot/kernel
           
-          # Copy Kernel & Initramfs
           cp artifacts/kernel/bzImage iso/boot/kernel/vmlinuz
           cp initramfs.img iso/boot/kernel/
           
-          # Copy Bootloader
           cp /usr/lib/ISOLINUX/isolinux.bin iso/boot/isolinux/
           cp /usr/lib/syslinux/modules/bios/ldlinux.c32 iso/boot/isolinux/
           
-          # Configure Bootloader
           cat > iso/boot/isolinux/isolinux.cfg <<EOF
           default linux
           prompt 0
@@ -476,7 +502,6 @@ jobs:
             append initrd=/boot/kernel/initramfs.img init=/init quiet loglevel=3
           EOF
           
-          # Generate ISO
           genisoimage -o alinux.iso \
             -b boot/isolinux/isolinux.bin \
             -c boot/isolinux/boot.cat \
@@ -509,6 +534,8 @@ jobs:
             - Custom Azul applications (introibo, alogin)
             - Full GNU tools from Ubuntu 24.04
             - Linux kernel ${{ env.KERNEL_VERSION }}
+            - Wayland ${{ env.WAYLAND_VERSION }}
+            - wlroots ${{ env.WLROOTS_VERSION }}
             
             **Boot sequence:**
             1. First boot → Installer (introibo) in cage kiosk mode
