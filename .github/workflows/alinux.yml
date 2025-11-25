@@ -103,6 +103,10 @@ jobs:
           ninja -C build
           DESTDIR=../wayland-install ninja -C build install
           
+          # Fix pkg-config files to point to the temporary install dir so subsequent build steps find them
+          ABS_INSTALL_DIR=$(readlink -f ../wayland-install)
+          find ../wayland-install -name "*.pc" -exec sed -i "s|prefix=/usr|prefix=${ABS_INSTALL_DIR}/usr|g" {} +
+          
       - name: Cache wayland-protocols
         id: wayland-protocols-cache
         uses: actions/cache@v3
@@ -114,6 +118,7 @@ jobs:
         if: steps.wayland-protocols-cache.outputs.cache-hit != 'true'
         run: |
           export PKG_CONFIG_PATH="${PWD}/wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wayland-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
+          export PATH="${PWD}/wayland-install/usr/bin:${PATH}"
           
           mkdir -p wayland-protocols-install
           wget -q https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/${WAYLAND_PROTOCOLS_VERSION}/downloads/wayland-protocols-${WAYLAND_PROTOCOLS_VERSION}.tar.xz
@@ -126,6 +131,10 @@ jobs:
           ninja -C build
           DESTDIR=../wayland-protocols-install ninja -C build install
           
+          # Fix pkg-config files
+          ABS_INSTALL_DIR=$(readlink -f ../wayland-protocols-install)
+          find ../wayland-protocols-install -name "*.pc" -exec sed -i "s|prefix=/usr|prefix=${ABS_INSTALL_DIR}/usr|g" {} +
+          
       - name: Cache wlroots
         id: wlroots-cache
         uses: actions/cache@v3
@@ -137,6 +146,7 @@ jobs:
         if: steps.wlroots-cache.outputs.cache-hit != 'true'
         run: |
           export PKG_CONFIG_PATH="${PWD}/wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wayland-install/usr/lib/pkgconfig:${PWD}/wayland-protocols-install/usr/share/pkgconfig:${PKG_CONFIG_PATH}"
+          export PATH="${PWD}/wayland-install/usr/bin:${PATH}"
           
           mkdir -p wlroots-install
           git clone --depth 1 --branch ${WLROOTS_VERSION} https://gitlab.freedesktop.org/wlroots/wlroots.git
@@ -150,6 +160,10 @@ jobs:
           ninja -C build
           DESTDIR=../wlroots-install ninja -C build install
           
+          # Fix pkg-config files
+          ABS_INSTALL_DIR=$(readlink -f ../wlroots-install)
+          find ../wlroots-install -name "*.pc" -exec sed -i "s|prefix=/usr|prefix=${ABS_INSTALL_DIR}/usr|g" {} +
+          
       - name: Cache cage
         id: cage-cache
         uses: actions/cache@v3
@@ -161,6 +175,7 @@ jobs:
         if: steps.cage-cache.outputs.cache-hit != 'true'
         run: |
           export PKG_CONFIG_PATH="${PWD}/wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wayland-install/usr/lib/pkgconfig:${PWD}/wayland-protocols-install/usr/share/pkgconfig:${PWD}/wlroots-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wlroots-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
+          export PATH="${PWD}/wayland-install/usr/bin:${PATH}"
           
           mkdir -p cage-install
           wget -q https://github.com/cage-kiosk/cage/releases/download/v${CAGE_VERSION}/cage-${CAGE_VERSION}.tar.gz
@@ -185,6 +200,7 @@ jobs:
         if: steps.labwc-cache.outputs.cache-hit != 'true'
         run: |
           export PKG_CONFIG_PATH="${PWD}/wayland-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wayland-install/usr/lib/pkgconfig:${PWD}/wayland-protocols-install/usr/share/pkgconfig:${PWD}/wlroots-install/usr/lib/x86_64-linux-gnu/pkgconfig:${PWD}/wlroots-install/usr/lib/pkgconfig:${PKG_CONFIG_PATH}"
+          export PATH="${PWD}/wayland-install/usr/bin:${PATH}"
           
           mkdir -p labwc-install
           wget -q https://github.com/labwc/labwc/archive/refs/tags/${LABWC_VERSION}.tar.gz -O labwc.tar.gz
